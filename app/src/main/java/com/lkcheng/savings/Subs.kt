@@ -197,7 +197,7 @@ fun SubRow(s: Sub, exp: Color, onClick: () -> Unit) {
                     if (!s.active) {
                         "已取消"
                     } else if (next != null && days != null) {
-                        "下次扣款 ${dateCn(next)}（${daysWord(days)}）" + if (s.autoRecord) " · 自动记账" else ""
+                        (if (s.isIncome) "下次入账 " else "下次扣款 ") + "${dateCn(next)}（${daysWord(days)}）" + if (s.autoRecord) " · 自动记账" else ""
                     } else {
                         ""
                     },
@@ -303,7 +303,7 @@ fun SubDialog(
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { v -> amountText = v.filter { it.isDigit() || it == '.' } },
-                    label = { Text("每次扣款金额") },
+                    label = { Text(if (isIncome) "每次入账金额" else "每次扣款金额") },
                     prefix = { Text(symbolOf(cur) + " ") },
                     singleLine = true,
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
@@ -323,7 +323,7 @@ fun SubDialog(
                     OutlinedTextField(
                         value = dateText,
                         onValueChange = { dateText = it.take(10) },
-                        label = { Text("下次扣款日（年-月-日）") },
+                        label = { Text(if (isIncome) "下次入账日（年-月-日）" else "下次扣款日（年-月-日）") },
                         isError = date == null,
                         singleLine = true,
                         modifier = Modifier.weight(1f),
@@ -357,14 +357,14 @@ fun SubDialog(
                     }
                     if (live.size < 2) Text("先到「💳 账户」新增交通卡账户", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
                 }
-                Text(if (topUp) "扣款前提醒" else "续费前提醒", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (isIncome) "入账提醒" else if (topUp) "扣款前提醒" else "续费前提醒", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for ((label, n) in listOf("当天" to 0, "提前1天" to 1, "提前3天" to 3, "提前7天" to 7)) {
                         FilterChip(selected = before == n, onClick = { before = n }, label = { Text(label, fontSize = 13.sp) })
                     }
                 }
                 HorizontalDivider()
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                if (!isIncome) Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("我想取消这个订阅")
                         Text("续费前会提醒你「记得去取消」", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
