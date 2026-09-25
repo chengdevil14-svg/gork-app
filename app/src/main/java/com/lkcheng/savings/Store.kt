@@ -16,6 +16,19 @@ data class Entry(
     val photo: String = "", // file name under filesDir/photos, "" = none
     val synced: Boolean = false,
     val photoSent: Boolean = false,
+    val tag: String = "",
+    val goalId: Long = 0L,
+)
+
+data class Goal(
+    val id: Long,
+    val name: String,
+    val debt: Boolean, // true = 欠款, false = 存款目标
+    val target: Double,
+    val monthly: Double = 0.0,
+    val deadline: String = "", // yyyy-MM or ""
+    val startDone: Double = 0.0,
+    val useTotal: Boolean = false, // 存款目标: 用总存款计算进度
 )
 
 class Store(context: Context) {
@@ -40,6 +53,8 @@ class Store(context: Context) {
                         photo = o.optString("photo", ""),
                         synced = o.optBoolean("synced", false),
                         photoSent = o.optBoolean("photoSent", false),
+                        tag = o.optString("tag", ""),
+                        goalId = o.optLong("goalId", 0L),
                     )
                 )
             } catch (e: Exception) {
@@ -61,9 +76,64 @@ class Store(context: Context) {
                     .put("photo", e.photo)
                     .put("synced", e.synced)
                     .put("photoSent", e.photoSent)
+                    .put("tag", e.tag)
+                    .put("goalId", e.goalId)
             )
         }
         sp.edit().putString("entries", arr.toString()).apply()
+    }
+
+    fun loadGoals(): List<Goal> {
+        if (!sp.contains("goals")) {
+            val old = goal
+            val list = if (old > 0) listOf(Goal(1L, "存钱目标", false, old, useTotal = true)) else emptyList()
+            saveGoals(list)
+            return list
+        }
+        val arr = try {
+            JSONArray(sp.getString("goals", "[]") ?: "[]")
+        } catch (e: Exception) {
+            JSONArray()
+        }
+        val out = ArrayList<Goal>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            try {
+                out.add(
+                    Goal(
+                        id = o.getLong("id"),
+                        name = o.optString("name", "目标"),
+                        debt = o.optBoolean("debt", false),
+                        target = o.optDouble("target", 0.0),
+                        monthly = o.optDouble("monthly", 0.0),
+                        deadline = o.optString("deadline", ""),
+                        startDone = o.optDouble("startDone", 0.0),
+                        useTotal = o.optBoolean("useTotal", false),
+                    )
+                )
+            } catch (e: Exception) {
+                // skip
+            }
+        }
+        return out
+    }
+
+    fun saveGoals(list: List<Goal>) {
+        val arr = JSONArray()
+        for (g in list) {
+            arr.put(
+                JSONObject()
+                    .put("id", g.id)
+                    .put("name", g.name)
+                    .put("debt", g.debt)
+                    .put("target", g.target)
+                    .put("monthly", g.monthly)
+                    .put("deadline", g.deadline)
+                    .put("startDone", g.startDone)
+                    .put("useTotal", g.useTotal)
+            )
+        }
+        sp.edit().putString("goals", arr.toString()).apply()
     }
 
     var goal: Double

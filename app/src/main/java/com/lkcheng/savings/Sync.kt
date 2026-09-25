@@ -53,18 +53,41 @@ object Sync {
         call(url, JSONObject().put("action", "delete").put("id", id.toString()))
     }
 
-    fun upsert(context: Context, url: String, e: Entry) {
+    fun upsert(context: Context, url: String, e: Entry, goalName: String) {
         val body = JSONObject()
             .put("action", "upsert")
             .put("id", e.id.toString())
             .put("date", e.date.toString())
             .put("amount", e.amount)
             .put("note", e.note)
+            .put("tag", e.tag)
+            .put("goal", goalName)
             .put("hasPhoto", e.photo.isNotEmpty())
         if (e.photo.isNotEmpty() && !e.photoSent) {
             val b64 = Photos.base64(context, e.photo)
             if (b64 != null) body.put("photo", b64)
         }
         call(url, body)
+    }
+
+    fun goals(url: String, list: List<Pair<Goal, GoalStat>>) {
+        val arr = org.json.JSONArray()
+        for ((g, st) in list) {
+            arr.put(
+                JSONObject()
+                    .put("name", g.name)
+                    .put("type", if (g.debt) "欠款" else "存款目标")
+                    .put("target", g.target)
+                    .put("done", st.done)
+                    .put("remaining", st.remaining)
+                    .put("pct", st.pct)
+                    .put("monthly", g.monthly)
+                    .put("thisMonth", st.thisMonth)
+                    .put("finish", if (st.remaining <= 0) "已完成" else st.finish?.toString() ?: "")
+                    .put("deadline", g.deadline)
+                    .put("need", st.needPerMonth ?: 0.0)
+            )
+        }
+        call(url, JSONObject().put("action", "goals").put("goals", arr))
     }
 }

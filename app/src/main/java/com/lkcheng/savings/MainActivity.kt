@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.lkcheng.savings
 
 import android.content.Context
@@ -19,6 +21,8 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -49,6 +53,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -68,6 +73,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -213,7 +219,9 @@ fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val entries = remember { mutableStateListOf<Entry>().apply { addAll(store.loadEntries()) } }
-    var goal by remember { mutableDoubleStateOf(store.goal) }
+    val goals = remember { mutableStateListOf<Goal>().apply { addAll(store.loadGoals()) } }
+    var editingGoal by remember { mutableStateOf<Goal?>(null) }
+    var newGoal by remember { mutableStateOf(false) }
     var greenIncome by remember { mutableStateOf(store.greenForIncome) }
     var syncUrl by remember { mutableStateOf(store.syncUrl) }
     var sheetUrl by remember { mutableStateOf(store.sheetUrl) }
@@ -231,6 +239,7 @@ fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
     val exp = if (greenIncome) RED else GREEN
 
     fun persist() = store.saveEntries(entries.toList())
+    fun persistGoals() = store.saveGoals(goals.toList())
 
     fun syncNow() {
         val url = syncUrl
@@ -245,13 +254,16 @@ fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
                     store.removePendingDelete(id)
                 }
                 for (e in entries.filter { !it.synced }.toList()) {
-                    withContext(Dispatchers.IO) { Sync.upsert(context, url, e) }
+                    val gName = goals.firstOrNull { it.id == e.goalId }?.name ?: ""
+                    withContext(Dispatchers.IO) { Sync.upsert(context, url, e, gName) }
                     val i = entries.indexOfFirst { it.id == e.id }
                     if (i >= 0 && entries[i] == e) {
                         entries[i] = e.copy(synced = true, photoSent = e.photo.isNotEmpty())
                         persist()
                     }
                 }
+                val snapshot = goals.toList().map { g -> g to calcGoal(g, entries.toList(), entries.sumOf { it.amount }) }
+                withContext(Dispatchers.IO) { Sync.goals(url, snapshot) }
             } catch (ex: Exception) {
                 err = ex.message ?: ex.toString()
             }
@@ -330,7 +342,7 @@ fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
                 }
             }
             item {
-                SummaryCard(total, goal, month, monthIn, monthOut, inc, exp)
+                SummaryCard(total, 0.0, month, monthIn, monthOut, inc, exp)
             }
             item {
                 MonthHeader(
@@ -375,7 +387,48 @@ fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
                 }
             }
             items(dayEntries, key = { it.id }) { e ->
-                EntryRow(e, inc, exp, showSync = syncUrl.isNotBlank()) { editing = e }
+                EntryRow(
+                    e, inc, exp,
+                    showSync = syncUrl.isNotBlank(),
+                    goalName = goals.firstOrNull { it.id == e.goalId }?.name ?: "",
+                ) { editing = e }
+            }
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "目标与欠款",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { newGoal = true }) { Text("＋ 新增") }
+                }
+            }
+            if (goals.isEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { newGoal = true },
+                        shape = RoundedCornerShape(16.dp),
+                    ) {
+                        Text(
+                            "还没有目标。可以加一个存款目标，或记下欠款（比如卡债），设置每月还多少，app 会自动算进度、本月还差多少、大概什么时候完成。",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(16.dp),
+                            fontSize = 14.sp,
+                        )
+                    }
+                }
+            }
+            val allEntries = entries.toList()
+            items(goals.toList(), key = { "g" + it.id }) { g ->
+                GoalCard(g, calcGoal(g, allEntries, total), inc, exp) { editingGoal = g }
             }
         }
     }
@@ -386,6 +439,9 @@ fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
             defaultDate = selected,
             inc = inc,
             exp = exp,
+            inTags = tagCandidates(entries, true),
+            outTags = tagCandidates(entries, false),
+            goals = goals.toList(),
             onDismiss = { showAdd = false },
             onSave = { e ->
                 entries.add(e)
@@ -404,6 +460,9 @@ fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
             defaultDate = current.date,
             inc = inc,
             exp = exp,
+            inTags = tagCandidates(entries, true),
+            outTags = tagCandidates(entries, false),
+            goals = goals.toList(),
             onDismiss = { editing = null },
             onSave = { e ->
                 val i = entries.indexOfFirst { it.id == e.id }
@@ -427,9 +486,41 @@ fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
         )
     }
 
+    if (newGoal || editingGoal != null) {
+        val g0 = editingGoal
+        GoalDialog(
+            initial = g0,
+            inc = inc,
+            exp = exp,
+            onDismiss = {
+                newGoal = false
+                editingGoal = null
+            },
+            onSave = { g ->
+                val i = goals.indexOfFirst { it.id == g.id }
+                if (i >= 0) goals[i] = g else goals.add(g)
+                persistGoals()
+                newGoal = false
+                editingGoal = null
+                syncNow()
+            },
+            onDelete = { g ->
+                goals.removeAll { it.id == g.id }
+                for (i in entries.indices) {
+                    if (entries[i].goalId == g.id) entries[i] = entries[i].copy(goalId = 0L, synced = false)
+                }
+                persist()
+                persistGoals()
+                newGoal = false
+                editingGoal = null
+                syncNow()
+            },
+        )
+    }
+
     if (showSettings) {
         SettingsDialog(
-            goal = goal,
+            goal = 0.0,
             greenIncome = greenIncome,
             syncUrl = syncUrl,
             sheetUrl = sheetUrl,
@@ -442,9 +533,7 @@ fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
             },
             onSave = { g, green, url, t ->
                 onThemeChange(t)
-                goal = g
                 greenIncome = green
-                store.goal = g
                 store.greenForIncome = green
                 if (url != syncUrl) {
                     syncUrl = url
@@ -666,7 +755,7 @@ fun PhotoThumb(name: String, sizeDp: Int, sample: Int, modifier: Modifier = Modi
 }
 
 @Composable
-fun EntryRow(e: Entry, inc: Color, exp: Color, showSync: Boolean, onClick: () -> Unit) {
+fun EntryRow(e: Entry, inc: Color, exp: Color, showSync: Boolean, goalName: String, onClick: () -> Unit) {
     val isIn = e.amount >= 0
     val color = if (isIn) inc else exp
     Card(
@@ -695,12 +784,14 @@ fun EntryRow(e: Entry, inc: Color, exp: Color, showSync: Boolean, onClick: () ->
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    e.note.ifBlank { if (isIn) "存入" else "取出" },
+                    e.note.ifBlank { e.tag.ifBlank { if (isIn) "存入" else "取出" } },
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 val parts = mutableListOf(if (isIn) "存入" else "取出")
+                if (e.tag.isNotBlank() && e.note.isNotBlank()) parts.add(e.tag)
+                if (goalName.isNotBlank()) parts.add("🎯 $goalName")
                 if (e.photo.isNotEmpty()) parts.add("📷")
                 if (showSync) parts.add(if (e.synced) "☁ 已同步" else "☁ 待同步")
                 Text(
@@ -760,17 +851,23 @@ fun PhotoViewer(name: String, onDismiss: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EntryDialog(
     initial: Entry?,
     defaultDate: LocalDate,
     inc: Color,
     exp: Color,
+    inTags: List<String>,
+    outTags: List<String>,
+    goals: List<Goal>,
     onDismiss: () -> Unit,
     onSave: (Entry) -> Unit,
     onDelete: (Entry) -> Unit,
 ) {
     val context = LocalContext.current
+    var tag by remember { mutableStateOf(initial?.tag ?: "") }
+    var goalId by remember { mutableLongStateOf(initial?.goalId ?: 0L) }
     var isIn by remember { mutableStateOf(initial?.let { it.amount >= 0 } ?: true) }
     var amountText by remember { mutableStateOf(initial?.let { plainNumber(kotlin.math.abs(it.amount)) } ?: "") }
     var note by remember { mutableStateOf(initial?.note ?: "") }
@@ -828,6 +925,34 @@ fun EntryDialog(
                             modifier = Modifier.weight(1f),
                             contentPadding = PaddingValues(0.dp),
                         ) { Text("+$q", fontSize = 12.sp) }
+                    }
+                }
+                TagPicker(tag, if (isIn) inTags else outTags) { tag = it }
+                val goalChoices = goals.filter { g ->
+                    g.id == goalId || (!(g.useTotal && !g.debt) && g.debt != isIn)
+                }
+                if (goalChoices.isNotEmpty()) {
+                    Text(
+                        if (isIn) "算进存款目标（可选）" else "用来还欠款（可选）",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(
+                            selected = goalId == 0L,
+                            onClick = { goalId = 0L },
+                            label = { Text("不关联", fontSize = 13.sp) },
+                        )
+                        for (g in goalChoices) {
+                            FilterChip(
+                                selected = goalId == g.id,
+                                onClick = {
+                                    goalId = g.id
+                                    if (tag.isBlank()) tag = if (g.debt) "欠债还款" else "存款"
+                                },
+                                label = { Text("🎯 " + g.name, fontSize = 13.sp) },
+                            )
+                        }
                     }
                 }
                 OutlinedTextField(
@@ -909,6 +1034,8 @@ fun EntryDialog(
                                 photo = photo,
                                 synced = false,
                                 photoSent = samePhoto && initial?.photoSent == true,
+                                tag = tag.trim(),
+                                goalId = goalId,
                             )
                         )
                     }
@@ -989,15 +1116,6 @@ fun SettingsDialog(
                         }
                     }
                 }
-                OutlinedTextField(
-                    value = goalText,
-                    onValueChange = { s -> goalText = s.filter { it.isDigit() || it == '.' } },
-                    label = { Text("存钱目标（留空=不设）") },
-                    prefix = { Text("$") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth(),
-                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("颜色习惯")
@@ -1059,11 +1177,12 @@ fun SettingsDialog(
                 OutlinedButton(
                     onClick = {
                         val csv = buildString {
-                            append("日期,类型,金额,备注\n")
+                            append("日期,类型,金额,分类,备注\n")
                             for (e in entries.sortedWith(compareBy({ it.date }, { it.id }))) {
                                 append(e.date.toString()).append(',')
                                 append(if (e.amount >= 0) "存入" else "取出").append(',')
                                 append(plainNumber(kotlin.math.abs(e.amount))).append(',')
+                                append(e.tag.replace(",", "，")).append(',')
                                 append(e.note.replace(",", "，").replace("\n", " ")).append('\n')
                             }
                         }
