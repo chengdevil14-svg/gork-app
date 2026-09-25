@@ -283,6 +283,15 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
         }
     }
 
+    fun runGoalInterest() {
+        val ng = processGoalInterest(goals.toList(), entries.toList())
+        if (ng != goals.toList()) {
+            goals.clear()
+            goals.addAll(ng)
+            persistGoals()
+        }
+    }
+
     fun runDeposits() {
         val (nd, ne) = processDeposits(deposits.toList(), accounts.toList())
         if (nd != deposits.toList()) {
@@ -363,6 +372,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
         runSubs()
         runDeposits()
         runCommute()
+        runGoalInterest()
         if (sharedUri != null) startScan(sharedUri)
         syncNow()
     }
@@ -537,6 +547,20 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                 AccountsStrip(accounts.toList(), entries.toList(), inc, exp) { showAccounts = true }
             }
             item {
+                val allE = entries.toList()
+                val nowYm = YearMonth.now()
+                val outNow = -allE.filter { YearMonth.from(it.date) == nowYm }.sumOf { minOf(0.0, statAmt(it, accList)) }
+                DailyCostCard(
+                    subs.toList(),
+                    accList,
+                    goals.toList().map { g -> g to calcGoal(g, allE, total) },
+                    deposits.toList(),
+                    outNow,
+                    inc,
+                    exp,
+                )
+            }
+            item {
                 MonthHeader(
                     month = month,
                     onPrev = { goToMonth(month.minusMonths(1)) },
@@ -637,7 +661,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "订阅 / 自动扣款",
+                        "固定收支 / 订阅",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f),

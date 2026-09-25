@@ -51,6 +51,9 @@ data class Goal(
     val useTotal: Boolean = false, // 存款目标: 用总存款计算进度
     val dueDay: Int = 0, // 每月还款/存款日 1-31, 0 = 不提醒
     val remindBefore: Int = 0, // 提前几天提醒
+    val rate: Double = 0.0, // 欠款年利率 %
+    val accrued: Double = 0.0, // 已累计加进欠款的利息
+    val accruedUntil: String = "", // yyyy-MM：利息已算到哪个月（含）
 )
 
 data class Sub(
@@ -67,6 +70,7 @@ data class Sub(
     val currency: String = "SGD",
     val accountId: Long = 0L, // 从哪个账户扣
     val toAccountId: Long = 0L, // != 0：自动充值/转账到自己的账户
+    val isIncome: Boolean = false, // 固定收入（如工资）
 )
 
 class Store(context: Context) {
@@ -155,6 +159,9 @@ class Store(context: Context) {
                         useTotal = o.optBoolean("useTotal", false),
                         dueDay = o.optInt("dueDay", 0),
                         remindBefore = o.optInt("remindBefore", 0),
+                        rate = o.optDouble("rate", 0.0),
+                        accrued = o.optDouble("accrued", 0.0),
+                        accruedUntil = o.optString("accruedUntil", ""),
                     )
                 )
             } catch (e: Exception) {
@@ -179,6 +186,9 @@ class Store(context: Context) {
                     .put("useTotal", g.useTotal)
                     .put("dueDay", g.dueDay)
                     .put("remindBefore", g.remindBefore)
+                    .put("rate", g.rate)
+                    .put("accrued", g.accrued)
+                    .put("accruedUntil", g.accruedUntil)
             )
         }
         sp.edit().putString("goals", arr.toString()).apply()
@@ -322,6 +332,7 @@ class Store(context: Context) {
                         currency = o.optString("currency", "SGD").ifBlank { "SGD" },
                         accountId = o.optLong("accountId", 0L),
                         toAccountId = o.optLong("toAccountId", 0L),
+                        isIncome = o.optBoolean("isIncome", false),
                     )
                 )
             } catch (e: Exception) {
@@ -349,6 +360,7 @@ class Store(context: Context) {
                     .put("currency", x.currency)
                     .put("accountId", x.accountId)
                     .put("toAccountId", x.toAccountId)
+                    .put("isIncome", x.isIncome)
             )
         }
         sp.edit().putString("subs", arr.toString()).apply()

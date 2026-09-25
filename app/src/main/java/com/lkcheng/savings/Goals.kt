@@ -57,7 +57,30 @@ data class GoalStat(
     val deadline: YearMonth?,
     val monthsToDeadline: Long,
     val needPerMonth: Double?,
+    val monthlyInterest: Double = 0.0,
+    val dailyInterest: Double = 0.0,
+    val neverPayoff: Boolean = false,
+    val futureInterest: Double = 0.0,
 )
+
+/** Adds a month of interest to debts for every completed month since last time. */
+fun processGoalInterest(goals: List<Goal>, entries: List<Entry>, now: YearMonth = YearMonth.now()): List<Goal> =
+    goals.map { g0 ->
+        if (!g0.debt || g0.rate <= 0) return@map g0
+        var g = g0
+        val last = parseYm(g.accruedUntil)
+        if (last == null) return@map g.copy(accruedUntil = now.minusMonths(1).toString())
+        var m = last.plusMonths(1)
+        var guard = 0
+        while (m.isBefore(now) && guard < 120) {
+            val st = calcGoal(g, entries, 0.0, m)
+            val add = st.remaining * g.rate / 1200.0
+            g = g.copy(accrued = round2(g.accrued + add), accruedUntil = m.toString())
+            m = m.plusMonths(1)
+            guard++
+        }
+        g
+    }
 
 fun parseYm(s: String): YearMonth? = try {
     if (s.isBlank()) null else YearMonth.parse(s.trim())
@@ -74,8 +97,12 @@ fun calcGoal(g: Goal, entries: List<Entry>, total: Double, now: YearMonth = Year
     val linked = entries.filter { it.goalId == g.id }
     val byTotal = !g.debt && g.useTotal
     val done = if (byTotal) total else g.startDone + linked.sumOf { contribution(g, it) }
-    val remaining = max(0.0, g.target - done)
-    val pct = if (g.target > 0) (done / g.target).coerceIn(0.0, 1.0) else 0.0
+    val owed = g.target + (if (g.debt) g.accrued else 0.0)
+    val remaining = max(0.0, owed - done)
+    val pct = if (owed > 0) (done / owed).coerceIn(0.0, 1.0) else 0.0
+    val r = if (g.debt && g.rate > 0) g.rate / 1200.0 else 0.0
+    var never = false
+    var futureInterest = 0.0
     val thisMonth = if (byTotal) {
         entries.filter { YearMonth.from(it.date) == now && !it.isTransfer }.sumOf { it.base }
     } else {
@@ -89,17 +116,40 @@ fun calcGoal(g: Goal, entries: List<Entry>, total: Double, now: YearMonth = Year
         // what is still planned for this month, then full months after
         val restOfThisMonth = min(remaining, max(0.0, g.monthly - thisMonth))
         val rest = remaining - restOfThisMonth
-        monthsLeft = ceil(rest / g.monthly - 1e-9).toInt()
-        finish = now.plusMonths(monthsLeft.toLong())
+        if (r > 0 && rest > 0) {
+            // amortization: months n so that payments cover balance + interest
+            if (g.monthly <= rest * r) {
+                never = true
+            } else {
+                monthsLeft = ceil(-kotlin.math.ln(1 - r * rest / g.monthly) / kotlin.math.ln(1 + r) - 1e-9).toInt()
+                finish = now.plusMonths(monthsLeft.toLong())
+                futureInterest = max(0.0, monthsLeft * g.monthly - rest)
+            }
+        } else {
+            monthsLeft = ceil(rest / g.monthly - 1e-9).toInt()
+            finish = now.plusMonths(monthsLeft.toLong())
+        }
     }
     val dl = parseYm(g.deadline)
     val monthsToDl = if (dl != null) ChronoUnit.MONTHS.between(now, dl) else 0L
     val need = if (dl != null && remaining > 0) {
-        if (monthsToDl <= 0) remaining else remaining / monthsToDl
+        if (monthsToDl <= 0) {
+            remaining
+        } else if (r > 0) {
+            remaining * r / (1 - Math.pow(1 + r, -monthsToDl.toDouble()))
+        } else {
+            remaining / monthsToDl
+        }
     } else {
         null
     }
-    return GoalStat(done, remaining, pct, thisMonth, linked.size, finish, monthsLeft, dl, monthsToDl, need)
+    return GoalStat(
+        done, remaining, pct, thisMonth, linked.size, finish, monthsLeft, dl, monthsToDl, need,
+        monthlyInterest = remaining * r,
+        dailyInterest = if (g.debt) remaining * g.rate / 100.0 / 365.0 else 0.0,
+        neverPayoff = never,
+        futureInterest = futureInterest,
+    )
 }
 
 @Composable
@@ -133,7 +183,7 @@ fun GoalCard(g: Goal, s: GoalStat, inc: Color, exp: Color, onClick: () -> Unit) 
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp,
                 )
-                Text(" / " + money(g.target), color = muted, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Text(" / " + money(g.target + if (g.debt) g.accrued else 0.0), color = muted, fontSize = 13.sp, modifier = Modifier.weight(1f))
                 Text(
                     "${(s.pct * 100).toInt()}%",
                     fontWeight = FontWeight.Bold,
@@ -149,6 +199,19 @@ fun GoalCard(g: Goal, s: GoalStat, inc: Color, exp: Color, onClick: () -> Unit) 
                     .clip(RoundedCornerShape(4.dp)),
                 color = MaterialTheme.colorScheme.primary,
             )
+            if (g.debt && g.rate > 0 && s.remaining > 0) {
+                Text(
+                    "💸 年利率 ${pct(g.rate)} · 每月利息约 ${money(s.monthlyInterest)} · 每天约 ${money(s.dailyInterest)}" +
+                        if (g.accrued > 0) " · 已累计利息 ${money(g.accrued)}" else "",
+                    fontSize = 12.sp,
+                    color = exp,
+                )
+                if (s.neverPayoff) {
+                    Text("⚠️ 每月还 ${money(g.monthly)} 不够付利息，欠款会越滚越多！至少要还 ${money(s.monthlyInterest)} 以上", fontSize = 13.sp, color = exp, fontWeight = FontWeight.Bold)
+                } else if (s.futureInterest > 0) {
+                    Text("按计划还清，还要再付利息约 ${money(s.futureInterest)}", fontSize = 12.sp, color = muted)
+                }
+            }
             if (s.remaining <= 0.0) {
                 Text(if (g.debt) "🎉 已经还清！" else "🎉 目标达成！", color = inc, fontWeight = FontWeight.Bold)
             } else {
@@ -241,6 +304,7 @@ fun GoalDialog(
     var useTotal by remember { mutableStateOf(initial?.useTotal ?: false) }
     var dueText by remember { mutableStateOf(initial?.let { if (it.dueDay > 0) it.dueDay.toString() else "" } ?: "") }
     var before by remember { mutableStateOf(initial?.remindBefore ?: 0) }
+    var rateText by remember { mutableStateOf(initial?.let { if (it.rate > 0) plainNumber(it.rate) else "" } ?: "") }
     var confirmDelete by remember { mutableStateOf(false) }
 
     val target = targetText.toDoubleOrNull() ?: 0.0
@@ -276,6 +340,29 @@ fun GoalDialog(
                     }
                 }
                 MoneyField(targetText, { targetText = it }, if (debt) "欠款总额" else "目标金额")
+                if (debt) {
+                    OutlinedTextField(
+                        value = rateText,
+                        onValueChange = { v -> rateText = v.filter { it.isDigit() || it == '.' } },
+                        label = { Text("年利率（可选，例如信用卡 24）") },
+                        suffix = { Text("% / 年") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    val rv = rateText.toDoubleOrNull() ?: 0.0
+                    val tv = targetText.toDoubleOrNull() ?: 0.0
+                    if (rv > 0 && tv > 0) {
+                        Text(
+                            "每月利息约 ${money(tv * rv / 1200)} · 每天约 ${money(tv * rv / 36500)}。每月底会自动把利息加进欠款。",
+                            fontSize = 12.sp,
+                            color = exp,
+                        )
+                    }
+                    if ((initial?.accrued ?: 0.0) > 0) {
+                        Text("已累计加入的利息：${money(initial?.accrued ?: 0.0)}", fontSize = 12.sp)
+                    }
+                }
                 if (!debt) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -370,6 +457,9 @@ fun GoalDialog(
                             useTotal = !debt && useTotal,
                             dueDay = if (dueDay in 1..31) dueDay else 0,
                             remindBefore = before,
+                            rate = if (debt) rateText.toDoubleOrNull() ?: 0.0 else 0.0,
+                            accrued = initial?.accrued ?: 0.0,
+                            accruedUntil = initial?.accruedUntil ?: "",
                         )
                     )
                 },

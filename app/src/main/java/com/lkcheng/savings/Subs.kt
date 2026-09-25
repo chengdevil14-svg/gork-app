@@ -47,7 +47,7 @@ import java.time.temporal.ChronoUnit
 
 val CYCLE_NAMES = listOf("每月", "每年", "每周")
 val SUB_PRESETS = listOf(
-    "Netflix", "Spotify", "YouTube Premium", "iCloud", "Google One", "ChatGPT", "Claude",
+    "房租", "水电", "保险", "Netflix", "Spotify", "YouTube Premium", "iCloud", "Google One", "ChatGPT", "Claude",
     "Disney+", "手机月费", "网络费", "健身房", "会员",
 )
 
@@ -74,7 +74,7 @@ fun nextBilling(s: Sub, from: LocalDate = LocalDate.now()): LocalDate? {
     return d
 }
 
-/** Monthly cost in the settlement currency. */
+/** Monthly amount in the settlement currency (cost for expenses, income for isIncome). */
 fun monthlyCost(s: Sub): Double = Fx.toBase(
     when (s.cycle) {
         1 -> s.amount / 12
@@ -110,8 +110,8 @@ fun processSubs(subs: List<Sub>, today: LocalDate = LocalDate.now()): Pair<List<
             if (s.autoRecord && (recorded == null || d.isAfter(recorded))) {
                 newEntries.add(
                     Entry(
-                        id = idSeed++, date = d, amount = -s.amount, note = s.name,
-                        tag = if (s.toAccountId != 0L) "转账" else "订阅", currency = s.currency,
+                        id = idSeed++, date = d, amount = if (s.isIncome) s.amount else -s.amount, note = s.name,
+                        tag = if (s.isIncome) "工资" else if (s.toAccountId != 0L) "交通卡充值" else "订阅", currency = s.currency,
                         accountId = s.accountId, toAccountId = s.toAccountId,
                     )
                 )
@@ -127,7 +127,7 @@ fun processSubs(subs: List<Sub>, today: LocalDate = LocalDate.now()): Pair<List<
 
 @Composable
 fun SubsSummary(subs: List<Sub>, exp: Color, onAdd: () -> Unit) {
-    val active = subs.filter { it.active && it.toAccountId == 0L }
+    val active = subs.filter { it.active && it.toAccountId == 0L && !it.isIncome }
     val perMonth = active.sumOf { monthlyCost(it) }
     val wantCancel = active.filter { it.wantCancel }
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
@@ -207,8 +207,8 @@ fun SubRow(s: Sub, exp: Color, onClick: () -> Unit) {
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    "-" + moneyC(s.amount, s.currency),
-                    color = if (s.active) exp else MaterialTheme.colorScheme.onSurfaceVariant,
+                    (if (s.isIncome) "+" else "-") + moneyC(s.amount, s.currency),
+                    color = if (!s.active) MaterialTheme.colorScheme.onSurfaceVariant else if (s.isIncome) Color(0xFF16A34A) else exp,
                     fontWeight = FontWeight.Bold,
                 )
                 Text(CYCLE_NAMES.getOrElse(s.cycle) { "每月" }, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -232,6 +232,7 @@ fun SubDialog(
     val live = accounts.filter { !it.archived }
     var accId by remember { mutableLongStateOf(initial?.accountId?.takeIf { id -> accounts.any { it.id == id } } ?: live.firstOrNull()?.id ?: 0L) }
     var topUp by remember { mutableStateOf((initial?.toAccountId ?: 0L) != 0L) }
+    var isIncome by remember { mutableStateOf(initial?.isIncome ?: false) }
     var toAccId by remember { mutableLongStateOf(initial?.toAccountId ?: 0L) }
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var amountText by remember { mutableStateOf(initial?.let { plainNumber(it.amount) } ?: "") }
@@ -249,7 +250,7 @@ fun SubDialog(
 
     val amount = amountText.toDoubleOrNull() ?: 0.0
     val date = parseDate(dateText)
-    val valid = name.isNotBlank() && amount > 0 && date != null && (!topUp || (toAccId != 0L && toAccId != accId))
+    val valid = name.isNotBlank() && amount > 0 && date != null && (isIncome || !topUp || (toAccId != 0L && toAccId != accId))
 
     fun build(): Sub? {
         val d = parseDate(dateText) ?: return null
@@ -267,19 +268,24 @@ fun SubDialog(
             // don't back-fill charges before the date the user entered
             currency = cur,
             accountId = accId,
-            toAccountId = if (topUp) toAccId else 0L,
+            toAccountId = if (topUp && !isIncome) toAccId else 0L,
+            isIncome = isIncome,
             recordedUntil = if (changedDate) d.minusDays(1).toString() else initial?.recordedUntil ?: "",
         )
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "新增订阅" else "编辑订阅") },
+        title = { Text(if (initial == null) "新增固定收支" else "编辑") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(selected = !isIncome, onClick = { isIncome = false }, label = { Text("－ 固定支出 / 订阅") })
+                    FilterChip(selected = isIncome, onClick = { isIncome = true; topUp = false }, label = { Text("＋ 固定收入") })
+                }
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it.take(24) },
@@ -289,7 +295,7 @@ fun SubDialog(
                 )
                 if (initial == null) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (n in SUB_PRESETS) {
+                        for (n in if (isIncome) listOf("工资", "兼职", "房租收入", "补贴", "花红") else SUB_PRESETS) {
                             FilterChip(selected = name == n, onClick = { name = n }, label = { Text(n, fontSize = 12.sp) })
                         }
                     }
@@ -329,13 +335,13 @@ fun SubDialog(
                         }, d.year, d.monthValue - 1, d.dayOfMonth).show()
                     }) { Text("📅") }
                 }
-                Text("从哪个账户扣", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (isIncome) "存进哪个账户" else "从哪个账户扣", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (a in live) {
                         FilterChip(selected = accId == a.id, onClick = { accId = a.id }, label = { Text(accIcon(a) + " " + a.name, fontSize = 12.sp) })
                     }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                if (!isIncome) Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("这是充值 / 转到自己的账户")
                         Text("例如银行卡自动充值 EZ-Link，不算支出", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -367,7 +373,7 @@ fun SubDialog(
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(if (topUp) "到日子自动记一笔充值" else "扣款日自动记一笔支出")
+                        Text(if (isIncome) "到日子自动记一笔收入" else if (topUp) "到日子自动记一笔充值" else "扣款日自动记一笔支出")
                         Text(if (topUp) "自动从扣款账户转到充值账户" else "分类「订阅」，不用自己手动记", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(checked = autoRecord, onCheckedChange = { autoRecord = it })

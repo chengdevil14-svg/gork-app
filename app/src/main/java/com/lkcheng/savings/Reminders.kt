@@ -333,6 +333,10 @@ object Reminders {
         val d = nextBilling(s) ?: return
         val days = ChronoUnit.DAYS.between(LocalDate.now(), d)
         val whenTxt = if (days <= 0L) "今天" else "$days 天后（${d.monthValue}月${d.dayOfMonth}日）"
+        if (s.isIncome) {
+            notify(ctx, kind.hashCode(), CH_SUB, "💰 ${s.name}", "${s.name} $whenTxt 入账 ${moneyC(s.amount, s.currency)}", false, false)
+            return
+        }
         val text = if (s.wantCancel) {
             "✂️ ${s.name} $whenTxt 会自动续费 ${moneyC(s.amount, s.currency)}。你标记了想取消，记得在扣款前去取消！"
         } else {
