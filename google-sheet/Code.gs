@@ -103,7 +103,10 @@ function doPost(e) {
       props.setProperty('SUB_EMAIL', d.subEmail ? 'true' : 'false');
       props.setProperty('BASE', d.baseCode || 'SGD');
       writeSubs_(ss, d.subs || [], d.baseCode || 'SGD');
-      rebuildSummaries_(ss, d.baseCode || 'SGD');
+      const sums = rebuildSummaries_(ss, d.baseCode || 'SGD');
+      splitMonths_(ss);
+      buildDashboard_(ss, d, sums || { day: {}, mon: {} });
+      arrangeTabs_(ss);
       if (d.emailOn || d.subEmail) {
         try { ensureDailyTrigger_(); } catch (e) { /* 需要先在编辑器运行 setup 授权 */ }
       }
@@ -324,11 +327,173 @@ function rebuildSummaries_(ss, base) {
   const fm = months.map((m, i) => [i + 2, money]).concat([[months.length + 2, money]]);
   writeTable_(ss, '分类汇总', ['分类（支出）'].concat(months).concat(['12 个月合计']), cRows, fm, '#E0538A');
 
-  ['记录', '每日汇总', '每月汇总', '每年汇总', '分类汇总', '目标', '订阅'].forEach((n, i) => {
-    const s = ss.getSheetByName(n);
-    if (s) { ss.setActiveSheet(s); ss.moveActiveSheet(i + 1); }
+  return { day: day, mon: mon };
+}
+
+// ---------- 明细按月分开（隐藏） ----------
+function splitMonths_(ss) {
+  const sh = getSheet_(ss);
+  const last = sh.getLastRow();
+  const cols = HEADERS.length;
+  const keep = {};
+  if (last >= 2) {
+    const dates = sh.getRange(2, COL.date, last - 1, 1).getDisplayValues().map(r => String(r[0]).slice(0, 7));
+    let i = 0;
+    while (i < dates.length) {
+      const mk = dates[i];
+      let j = i;
+      while (j + 1 < dates.length && dates[j + 1] === mk) j++;
+      if (/^\d{4}-\d{2}$/.test(mk)) {
+        const name = '明细 ' + mk;
+        keep[name] = true;
+        let dest = ss.getSheetByName(name);
+        if (!dest) dest = ss.insertSheet(name);
+        dest.clear();
+        const n = j - i + 1;
+        sh.getRange(1, 1, 1, cols).copyTo(dest.getRange(1, 1));
+        sh.getRange(i + 2, 1, n, cols).copyTo(dest.getRange(2, 1));
+        for (let c = 1; c <= cols; c++) dest.setColumnWidth(c, sh.getColumnWidth(c));
+        for (let r = 0; r < n; r++) {
+          const h = sh.getRowHeight(i + 2 + r);
+          if (h > 30) dest.setRowHeight(r + 2, h);
+        }
+        dest.setFrozenRows(1);
+        dest.hideColumns(COL.id, 2);
+        dest.setTabColor('#94A3B8');
+      }
+      i = j + 1;
+    }
+  }
+  ss.getSheets().forEach(s => {
+    const n = s.getName();
+    if (n.indexOf('明细 ') === 0 && !keep[n]) ss.deleteSheet(s);
   });
-  ss.setActiveSheet(sh);
+}
+
+// ---------- 首页仪表板 ----------
+function buildDashboard_(ss, d, sums) {
+  let s = ss.getSheetByName('首页');
+  if (!s) s = ss.insertSheet('首页', 0);
+  s.getRange(1, 1, s.getMaxRows(), s.getMaxColumns()).breakApart();
+  s.clear();
+  s.setHiddenGridlines(true);
+  s.setTabColor('#3E95D6');
+  const base = d.baseCode || 'SGD';
+  const tz = ss.getSpreadsheetTimeZone();
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth() + 1;
+  const mk = y + '-' + ('0' + m).slice(-2);
+  const days = new Date(y, m, 0).getDate();
+  const money = '#,##0.00';
+  const BLUE = '#3E95D6', GREEN = '#16A34A', RED = '#DC2626';
+
+  // title + month totals
+  s.getRange('A1:G1').merge().setValue('📒 成长账本 · ' + y + '年' + m + '月（' + base + '）')
+    .setFontSize(15).setFontWeight('bold').setBackground(BLUE).setFontColor('#FFFFFF').setVerticalAlignment('middle');
+  s.setRowHeight(1, 36);
+  const mo = (sums.mon && sums.mon[mk]) || { in: 0, out: 0 };
+  s.getRange('A2:G2').setValues([['存入', mo.in, '', '支出', mo.out, '结余', mo.in - mo.out]]);
+  s.getRange('B2').setNumberFormat(money).setFontColor(GREEN).setFontWeight('bold');
+  s.getRange('E2').setNumberFormat(money).setFontColor(RED).setFontWeight('bold');
+  s.getRange('G2').setNumberFormat(money).setFontWeight('bold').setFontColor(mo.in - mo.out >= 0 ? GREEN : RED);
+  s.getRange('B2:C2').merge();
+  s.setRowHeight(2, 28);
+
+  // calendar
+  const WEEK = ['一', '二', '三', '四', '五', '六', '日'];
+  s.getRange(3, 1, 1, 7).setValues([WEEK]).setFontWeight('bold').setHorizontalAlignment('center').setBackground('#E8F3FC');
+  const first = new Date(y, m - 1, 1);
+  const offset = (first.getDay() + 6) % 7;
+  const rows = Math.ceil((offset + days) / 7);
+  const grid = [], bgs = [], fcs = [];
+  for (let r = 0; r < rows; r++) {
+    grid.push(['', '', '', '', '', '', '']);
+    bgs.push(['#FFFFFF', '#FFFFFF', '#FFFFFF', '#FFFFFF', '#FFFFFF', '#FFFFFF', '#FFFFFF']);
+    fcs.push(['#111827', '#111827', '#111827', '#111827', '#111827', '#111827', '#111827']);
+  }
+  for (let dd = 1; dd <= days; dd++) {
+    const idx = offset + dd - 1, r = Math.floor(idx / 7), c = idx % 7;
+    const key = mk + '-' + ('0' + dd).slice(-2);
+    const o = sums.day && sums.day[key];
+    let t = String(dd);
+    if (o) {
+      if (o.in > 0) t += '\n+' + o.in.toFixed(2);
+      if (o.out > 0) t += '\n-' + o.out.toFixed(2);
+      const net = o.in - o.out;
+      bgs[r][c] = net > 0 ? '#DCFCE7' : (net < 0 ? '#FEE2E2' : '#FFFFFF');
+      fcs[r][c] = net >= 0 ? '#166534' : '#991B1B';
+    }
+    if (dd === now.getDate()) t = '📍' + t;
+    grid[r][c] = t;
+  }
+  const cal = s.getRange(4, 1, rows, 7);
+  cal.setValues(grid).setBackgrounds(bgs).setFontColors(fcs).setWrap(true).setVerticalAlignment('top')
+    .setFontSize(10).setBorder(true, true, true, true, true, true, '#E5E7EB', SpreadsheetApp.BorderStyle.SOLID);
+  for (let r = 0; r < rows; r++) s.setRowHeight(4 + r, 58);
+  for (let c = 1; c <= 7; c++) s.setColumnWidth(c, 78);
+
+  // last 12 months under the calendar
+  let r0 = 4 + rows + 1;
+  s.getRange(r0, 1, 1, 7).merge().setValue('📈 最近 12 个月').setFontWeight('bold').setBackground(BLUE).setFontColor('#FFFFFF');
+  s.getRange(r0 + 1, 1, 1, 4).setValues([['月份', '存入', '支出', '结余']]).setFontWeight('bold');
+  const mkeys = Object.keys(sums.mon || {}).sort().reverse().slice(0, 12);
+  if (mkeys.length) {
+    const mr = mkeys.map(k => [k, sums.mon[k].in, sums.mon[k].out, sums.mon[k].in - sums.mon[k].out]);
+    s.getRange(r0 + 2, 1, mr.length, 4).setValues(mr);
+    s.getRange(r0 + 2, 2, mr.length, 3).setNumberFormat(money);
+  }
+
+  // right-hand panels
+  s.setColumnWidth(8, 16);
+  const W = [140, 90, 95, 95];
+  for (let i = 0; i < 4; i++) s.setColumnWidth(9 + i, W[i]);
+  let r = 1;
+  const panel = (title, color, head, data, fmts) => {
+    s.getRange(r, 9, 1, 4).merge().setValue(title).setFontWeight('bold').setBackground(color).setFontColor('#FFFFFF').setVerticalAlignment('middle');
+    s.setRowHeight(r, 30);
+    r++;
+    s.getRange(r, 9, 1, head.length).setValues([head]).setFontWeight('bold').setFontSize(9).setFontColor('#6B7280');
+    r++;
+    if (data.length) {
+      const padded = data.map(row => row.concat(['', '', '', '']).slice(0, 4));
+      s.getRange(r, 9, padded.length, 4).setValues(padded).setWrap(true).setVerticalAlignment('middle');
+      (fmts || []).forEach(f => s.getRange(r, 9 + f[0], padded.length, 1).setNumberFormat(f[1]));
+      r += padded.length;
+    } else {
+      s.getRange(r, 9).setValue('（还没有）').setFontColor('#9CA3AF');
+      r++;
+    }
+    r++;
+  };
+  const ICON = ['💵', '🏦', '💳', '📱', '👛', '🚇'];
+  const TYPE = ['现金', '银行卡', '信用卡', '电子钱包', '其他', '交通卡'];
+  panel('💳 账户', '#1D4ED8', ['账户', '类型', '余额', '货币'],
+    (d.accounts || []).map(a => [(ICON[a.type] || '') + ' ' + a.name, TYPE[a.type] || '', a.balance, a.currency]), [[2, money]]);
+  panel('🔁 固定收支 / 订阅', '#E0538A', ['名称', '金额', '周期', '下次'],
+    (d.subs || []).filter(x => x.active).map(x => [(x.wantCancel ? '✂️ ' : '') + x.name, (x.isIncome ? '+' : '-') + Number(x.amount).toFixed(2) + ' ' + x.currency, x.cycle, x.next]));
+  panel('🎯 欠款 / 目标', '#9B4DDB', ['名称', '剩余', '进度', '预计完成'],
+    (d.goals || []).map(g => [(g.type === '欠款' ? '💸 ' : '🎯 ') + g.name, g.remaining, g.pct, g.finish]), [[1, money], [2, '0%']]);
+  panel('💰 利息 / 定期', '#2E9D5B', ['名称', '本金', '年利率', '到期 / 已赚'],
+    (d.deposits || []).map(x => [x.name, x.principal, x.rate / 100, x.maturity ? x.maturity : '已赚 ' + Number(x.accrued).toFixed(2)]), [[1, money], [2, '0.00%']]);
+  s.getRange(r, 9, 1, 4).merge().setValue('更新于 ' + Utilities.formatDate(now, tz, 'yyyy-MM-dd HH:mm') + ' · 明细在隐藏的「明细 YYYY-MM」页')
+    .setFontSize(9).setFontColor('#9CA3AF');
+}
+
+// 首页、汇总在前；原始记录、每日、目标、订阅、按月明细隐藏
+function arrangeTabs_(ss) {
+  const home = ss.getSheetByName('首页');
+  if (home) { home.showSheet(); ss.setActiveSheet(home); ss.moveActiveSheet(1); }
+  const visible = ['首页', '每月汇总', '每年汇总', '分类汇总'];
+  const hidden = ['记录', '每日汇总', '目标', '订阅'];
+  let pos = 2;
+  visible.slice(1).concat(hidden).forEach(n => {
+    const s = ss.getSheetByName(n);
+    if (s) { s.showSheet(); ss.setActiveSheet(s); ss.moveActiveSheet(pos++); }
+  });
+  const months = ss.getSheets().map(s => s.getName()).filter(n => n.indexOf('明细 ') === 0).sort().reverse();
+  months.forEach(n => { const s = ss.getSheetByName(n); ss.setActiveSheet(s); ss.moveActiveSheet(pos++); });
+  if (home) ss.setActiveSheet(home);
+  hidden.concat(months).forEach(n => { const s = ss.getSheetByName(n); if (s && !s.isSheetHidden()) s.hideSheet(); });
 }
 
 function writeTable_(ss, name, head, rows, formats, color) {
@@ -343,6 +508,11 @@ function writeTable_(ss, name, head, rows, formats, color) {
   }
   s.setFrozenRows(1);
   s.autoResizeColumns(1, head.length);
+  for (let c = 1; c <= head.length; c++) {
+    const w = s.getColumnWidth(c);
+    if (w < 80) s.setColumnWidth(c, 80);
+    if (w > 260) { s.setColumnWidth(c, 260); s.getRange(1, c, Math.max(1, rows.length + 1), 1).setWrap(true); }
+  }
 }
 
 function findRow_(sh, id) {

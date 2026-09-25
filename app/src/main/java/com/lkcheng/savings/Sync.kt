@@ -77,7 +77,27 @@ object Sync {
         call(url, body)
     }
 
-    fun goals(url: String, list: List<Pair<Goal, GoalStat>>, emailOn: Boolean, subs: List<Sub>, subEmail: Boolean) {
+    fun goals(
+        url: String,
+        list: List<Pair<Goal, GoalStat>>,
+        emailOn: Boolean,
+        subs: List<Sub>,
+        subEmail: Boolean,
+        accounts: List<Pair<Account, Double>> = emptyList(),
+        deposits: List<Deposit> = emptyList(),
+    ) {
+        val aArr = org.json.JSONArray()
+        for ((a, bal) in accounts) {
+            aArr.put(JSONObject().put("name", a.name).put("type", a.type).put("currency", a.currency).put("balance", round2(bal)))
+        }
+        val dArr = org.json.JSONArray()
+        for (d in deposits.filter { it.active }) {
+            val st = calcDeposit(d)
+            dArr.put(
+                JSONObject().put("name", d.name).put("principal", d.principal).put("rate", d.rate)
+                    .put("maturity", st.maturity?.toString() ?: "").put("accrued", round2(st.accrued))
+            )
+        }
         val sArr = org.json.JSONArray()
         for (x in subs) {
             sArr.put(
@@ -91,6 +111,7 @@ object Sync {
                     .put("wantCancel", x.wantCancel)
                     .put("active", x.active)
                     .put("monthlyBase", monthlyCost(x))
+                    .put("isIncome", x.isIncome)
             )
         }
         val arr = org.json.JSONArray()
@@ -115,7 +136,8 @@ object Sync {
         call(
             url,
             JSONObject().put("action", "goals").put("goals", arr).put("emailOn", emailOn)
-                .put("subs", sArr).put("subEmail", subEmail).put("baseCode", Cur.code),
+                .put("subs", sArr).put("subEmail", subEmail).put("baseCode", Cur.code)
+                .put("accounts", aArr).put("deposits", dArr),
         )
     }
 }

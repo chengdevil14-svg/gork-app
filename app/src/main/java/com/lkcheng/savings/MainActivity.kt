@@ -371,8 +371,10 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                 val nwSnap = netWorth(entries.toList(), accounts.toList())
                 val snapshot = goals.toList().map { g -> g to calcGoal(g, entries.toList(), nwSnap) }
                 val subsSnap = subs.toList()
+                val accSnap = accounts.toList().filter { !it.archived }.map { a -> a to balanceOf(a, entries.toList(), accounts.toList()) }
+                val depSnap = deposits.toList()
                 withContext(Dispatchers.IO) {
-                    Sync.goals(url, snapshot, prefs.emailOn.value, subsSnap, prefs.subEmail.value)
+                    Sync.goals(url, snapshot, prefs.emailOn.value, subsSnap, prefs.subEmail.value, accSnap, depSnap)
                 }
             } catch (ex: Exception) {
                 err = ex.message ?: ex.toString()
