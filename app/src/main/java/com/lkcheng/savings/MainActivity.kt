@@ -439,7 +439,13 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
             onClose = { showAccounts = false },
         )
     } else if (showReport) {
-        ReportScreen(entries.toList(), accounts.toList(), inc, exp) { showReport = false }
+        val allE = entries.toList()
+        val nw = netWorth(allE, accounts.toList())
+        ReportScreen(
+            allE, accounts.toList(), subs.toList(),
+            goals.toList().map { g -> g to calcGoal(g, allE, nw) },
+            deposits.toList(), inc, exp,
+        ) { showReport = false }
     } else if (showSettings) {
         SettingsScreen(
             theme = theme,

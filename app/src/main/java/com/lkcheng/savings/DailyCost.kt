@@ -33,8 +33,8 @@ fun dailyLines(
     accounts: List<Account>,
     goals: List<Pair<Goal, GoalStat>>,
     deposits: List<Deposit>,
+    ym: YearMonth = YearMonth.now(),
 ): Pair<List<CostLine>, List<CostLine>> {
-    val ym = YearMonth.now()
     val days = ym.lengthOfMonth()
     val costs = ArrayList<CostLine>()
     val incomes = ArrayList<CostLine>()

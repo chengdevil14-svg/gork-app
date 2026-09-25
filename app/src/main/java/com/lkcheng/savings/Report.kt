@@ -52,25 +52,57 @@ import java.time.YearMonth
 import kotlin.math.abs
 
 @Composable
-fun ReportScreen(entries: List<Entry>, accounts: List<Account>, inc: Color, exp: Color, onClose: () -> Unit) {
+fun ReportScreen(
+    entries: List<Entry>,
+    accounts: List<Account>,
+    subs: List<Sub>,
+    goalStats: List<Pair<Goal, GoalStat>>,
+    deposits: List<Deposit>,
+    inc: Color,
+    exp: Color,
+    onClose: () -> Unit,
+) {
     BackHandler { onClose() }
-    var yearMode by rememberSaveable { mutableStateOf(false) }
-    var ymStr by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
-    val ym = YearMonth.parse(ymStr)
+    var mode by rememberSaveable { mutableStateOf(1) } // 0 日 1 月 2 年
+    var dayStr by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
+    val day = LocalDate.parse(dayStr)
+    val ym = YearMonth.from(day)
+    val yearMode = mode == 2
     val sv = { e: Entry -> statAmt(e, accounts) }
     val real = entries.filter { sv(it) != 0.0 }
 
-    fun inPeriod(d: LocalDate, y: YearMonth) = if (yearMode) d.year == y.year else YearMonth.from(d) == y
-    val cur = real.filter { inPeriod(it.date, ym) }
-    val prevYm = if (yearMode) ym.minusYears(1) else ym.minusMonths(1)
-    val prev = real.filter { inPeriod(it.date, prevYm) }
+    fun inPeriod(d: LocalDate, ref: LocalDate) = when (mode) {
+        0 -> d == ref
+        2 -> d.year == ref.year
+        else -> YearMonth.from(d) == YearMonth.from(ref)
+    }
+    val prevDay = when (mode) {
+        0 -> day.minusDays(1)
+        2 -> day.minusYears(1)
+        else -> day.minusMonths(1)
+    }
+    val nextDay = when (mode) {
+        0 -> day.plusDays(1)
+        2 -> day.plusYears(1)
+        else -> day.plusMonths(1)
+    }
+    val cur = real.filter { inPeriod(it.date, day) }
+    val prev = real.filter { inPeriod(it.date, prevDay) }
 
     val inSum = cur.filter { sv(it) > 0 }.sumOf { sv(it) }
     val outSum = -cur.filter { sv(it) < 0 }.sumOf { sv(it) }
     val prevOut = -prev.filter { sv(it) < 0 }.sumOf { sv(it) }
     val prevIn = prev.filter { sv(it) > 0 }.sumOf { sv(it) }
-    val periodName = if (yearMode) "${ym.year}年" else "${ym.year}年${ym.monthValue}月"
-    val prevName = if (yearMode) "去年" else "上月"
+    val periodName = when (mode) {
+        0 -> "${day.monthValue}月${day.dayOfMonth}日 ${weekdayCn(day)}"
+        2 -> "${ym.year}年"
+        else -> "${ym.year}年${ym.monthValue}月"
+    }
+    val prevName = when (mode) {
+        0 -> "前一天"
+        2 -> "去年"
+        else -> "上月"
+    }
 
     Scaffold(
         topBar = {
@@ -91,18 +123,26 @@ fun ReportScreen(entries: List<Entry>, accounts: List<Account>, inc: Color, exp:
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                FilterChip(selected = !yearMode, onClick = { yearMode = false }, label = { Text("按月") })
-                Spacer(Modifier.width(8.dp))
-                FilterChip(selected = yearMode, onClick = { yearMode = true }, label = { Text("按年") })
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = { ymStr = prevYm.toString() }) {
+                FilterChip(selected = mode == 0, onClick = { mode = 0 }, label = { Text("按日") })
+                Spacer(Modifier.width(6.dp))
+                FilterChip(selected = mode == 1, onClick = { mode = 1 }, label = { Text("按月") })
+                Spacer(Modifier.width(6.dp))
+                FilterChip(selected = mode == 2, onClick = { mode = 2 }, label = { Text("按年") })
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { dayStr = prevDay.toString() }) {
                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "上一期")
                 }
-                Text(periodName, fontWeight = FontWeight.Bold)
-                IconButton(onClick = { ymStr = (if (yearMode) ym.plusYears(1) else ym.plusMonths(1)).toString() }) {
+                Text(periodName, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                IconButton(onClick = { dayStr = nextDay.toString() }) {
                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "下一期")
                 }
             }
+            if (day != LocalDate.now()) {
+                androidx.compose.material3.TextButton(onClick = { dayStr = LocalDate.now().toString() }) { Text("回到今天") }
+            }
+
+            CostStatsCard(mode, day, cur, sv, subs, accounts, goalStats, deposits, inSum, inc, exp)
 
             // Totals
             Card(shape = RoundedCornerShape(20.dp)) {
@@ -134,8 +174,38 @@ fun ReportScreen(entries: List<Entry>, accounts: List<Account>, inc: Color, exp:
             }
 
             // Trend chart
-            Text(if (yearMode) "每月支出 / 收入" else "每日支出", fontWeight = FontWeight.Bold)
-            Card(shape = RoundedCornerShape(16.dp)) {
+            if (mode != 0) Text(if (yearMode) "每月支出 / 收入" else "每日支出", fontWeight = FontWeight.Bold)
+            if (mode == 0) {
+                Text("当天记录", fontWeight = FontWeight.Bold)
+                val todays = entries.filter { it.date == day }.sortedByDescending { it.id }
+                if (todays.isEmpty()) {
+                    Text("这天没有记录", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Card(shape = RoundedCornerShape(16.dp)) {
+                        for ((i, e) in todays.withIndex()) {
+                            if (i > 0) HorizontalDivider()
+                            val v = sv(e)
+                            Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(e.note.ifBlank { e.tag.ifBlank { if (e.amount >= 0) "存入" else "取出" } }, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        e.tag.ifBlank { "未分类" } + " · " + accName(accOf(e, accounts), accounts) +
+                                            if (v == 0.0) " · 不计入收支" else "",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Text(
+                                    signedMoneyC(e.amount, e.currency),
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (v == 0.0) MaterialTheme.colorScheme.onSurfaceVariant else if (e.amount >= 0) inc else exp,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            if (mode != 0) Card(shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.padding(16.dp)) {
                     if (yearMode) {
                         val outs = (1..12).map { m -> -cur.filter { it.date.monthValue == m && sv(it) < 0 }.sumOf { sv(it) } }
@@ -295,6 +365,98 @@ fun BreakdownCard(title: String, data: Map<String, Double>, total: Double, color
                     }
                 }
             }
+        }
+    }
+}
+
+
+/** Entries that are already counted as fixed costs (auto-recorded subscriptions / top-ups). */
+fun isFixedEntry(e: Entry, subs: List<Sub>) =
+    e.amount < 0 && (e.tag == "订阅" || e.tag == "交通卡充值" || subs.any { !it.isIncome && it.name == e.note })
+
+@Composable
+fun CostStatsCard(
+    mode: Int,
+    day: LocalDate,
+    cur: List<Entry>,
+    sv: (Entry) -> Double,
+    subs: List<Sub>,
+    accounts: List<Account>,
+    goalStats: List<Pair<Goal, GoalStat>>,
+    deposits: List<Deposit>,
+    inSum: Double,
+    inc: Color,
+    exp: Color,
+) {
+    // months covered by the period, with how many days of each
+    val parts: List<Pair<YearMonth, Int>> = when (mode) {
+        0 -> listOf(YearMonth.from(day) to 1)
+        2 -> (1..12).map { YearMonth.of(day.year, it) }.map { it to it.lengthOfMonth() }
+        else -> YearMonth.from(day).let { listOf(it to it.lengthOfMonth()) }
+    }
+    val periodDays = parts.sumOf { it.second }
+    val costMap = LinkedHashMap<String, Double>()
+    var fixedCost = 0.0
+    var fixedIncome = 0.0
+    for ((m, n) in parts) {
+        val (c, i) = dailyLines(subs, accounts, goalStats, deposits, m)
+        for (l in c) {
+            costMap[l.label] = (costMap[l.label] ?: 0.0) + l.perDay * n
+            fixedCost += l.perDay * n
+        }
+        fixedIncome += i.sumOf { it.perDay } * n
+    }
+    val variable = -cur.filter { sv(it) < 0 && !isFixedEntry(it, subs) }.sumOf { sv(it) }
+    val realCost = fixedCost + variable
+    val label = when (mode) {
+        0 -> "当天"
+        2 -> "今年"
+        else -> "本月"
+    }
+    Text("💡 $label 成本统计", fontWeight = FontWeight.Bold)
+    Card(shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row {
+                Column(Modifier.weight(1f)) {
+                    Text("固定成本（分摊）", fontSize = 12.sp)
+                    Text(money(fixedCost), color = exp, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+                Column(Modifier.weight(1f)) {
+                    Text("日常花费", fontSize = 12.sp)
+                    Text(money(variable), color = exp, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+                Column(Modifier.weight(1f)) {
+                    Text("真实总成本", fontSize = 12.sp)
+                    Text(money(realCost), color = exp, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+            }
+            if (mode != 0) {
+                Text("平均每天成本 ${money(realCost / periodDays)}（${money(realCost)} ÷ $periodDays 天）", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            }
+            HorizontalDivider(Modifier.padding(vertical = 2.dp))
+            Text("固定收入（分摊）${money(fixedIncome)} · 实际收入 ${money(inSum)}", fontSize = 13.sp)
+            val left = inSum - realCost
+            Text(
+                "按真实成本算结余：" + signedMoney(left),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (left >= 0) inc else exp,
+            )
+            if (costMap.isNotEmpty()) {
+                HorizontalDivider(Modifier.padding(vertical = 2.dp))
+                Text("固定成本明细", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                for ((k, v) in costMap.entries.sortedByDescending { it.value }) {
+                    Row {
+                        Text(k, fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(money(v), fontSize = 13.sp)
+                    }
+                }
+            }
+            Text(
+                "固定成本 = 房租、订阅、自动扣款、通勤、欠款利息按天分摊；日常花费 = 其他实际支出（已记的房租、订阅不重复算）。",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
