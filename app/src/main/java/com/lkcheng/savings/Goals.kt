@@ -196,6 +196,10 @@ fun GoalCard(g: Goal, s: GoalStat, inc: Color, exp: Color, onClick: () -> Unit) 
                     )
                 }
             }
+            val dl2 = dueLine(g)
+            if (dl2 != null && s.remaining > 0) {
+                Text("📅 $dl2", fontSize = 13.sp)
+            }
             if (!(!g.debt && g.useTotal)) {
                 Text("已关联 ${s.count} 笔记录 · 点击编辑", fontSize = 12.sp, color = muted)
             } else {
@@ -235,11 +239,15 @@ fun GoalDialog(
     var monthlyText by remember { mutableStateOf(initial?.let { if (it.monthly > 0) plainNumber(it.monthly) else "" } ?: "") }
     var deadlineText by remember { mutableStateOf(initial?.deadline ?: "") }
     var useTotal by remember { mutableStateOf(initial?.useTotal ?: false) }
+    var dueText by remember { mutableStateOf(initial?.let { if (it.dueDay > 0) it.dueDay.toString() else "" } ?: "") }
+    var before by remember { mutableStateOf(initial?.remindBefore ?: 0) }
     var confirmDelete by remember { mutableStateOf(false) }
 
     val target = targetText.toDoubleOrNull() ?: 0.0
     val deadlineOk = deadlineText.isBlank() || parseYm(deadlineText) != null
-    val valid = name.isNotBlank() && target > 0 && deadlineOk
+    val dueDay = dueText.toIntOrNull() ?: 0
+    val dueOk = dueText.isBlank() || dueDay in 1..31
+    val valid = name.isNotBlank() && target > 0 && deadlineOk && dueOk
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -301,6 +309,28 @@ fun GoalDialog(
                     }
                     FilterChip(selected = deadlineText.isBlank(), onClick = { deadlineText = "" }, label = { Text("不设", fontSize = 13.sp) })
                 }
+                OutlinedTextField(
+                    value = dueText,
+                    onValueChange = { v -> dueText = v.filter { it.isDigit() }.take(2) },
+                    label = { Text(if (debt) "每月还款日（几号，可选）" else "每月存款日（几号，可选）") },
+                    isError = !dueOk,
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (dueDay in 1..31) {
+                    Text("提醒时间", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for ((label, n) in listOf("当天" to 0, "提前1天" to 1, "提前3天" to 3, "提前7天" to 7)) {
+                            FilterChip(selected = before == n, onClick = { before = n }, label = { Text(label, fontSize = 13.sp) })
+                        }
+                    }
+                    Text(
+                        "提醒方式（通知 / 闹钟响铃 / Email / 手机日历）在「设置 → 提醒与通知」里选。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Text(
                     if (debt) "记一笔「取出」时选这个欠款，就会自动算进还款进度。" else "记一笔「存入」时选这个目标，就会自动算进进度。",
                     fontSize = 12.sp,
@@ -338,6 +368,8 @@ fun GoalDialog(
                             deadline = parseYm(deadlineText)?.toString() ?: "",
                             startDone = if (!debt && useTotal) 0.0 else startText.toDoubleOrNull() ?: 0.0,
                             useTotal = !debt && useTotal,
+                            dueDay = if (dueDay in 1..31) dueDay else 0,
+                            remindBefore = before,
                         )
                     )
                 },

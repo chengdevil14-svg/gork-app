@@ -116,6 +116,12 @@ class MainActivity : ComponentActivity() {
         }
         enableEdgeToEdge()
         val store = Store(applicationContext)
+        val openAdd = intent?.getBooleanExtra("open_add", false) == true
+        try {
+            Reminders.scheduleAll(applicationContext)
+        } catch (e: Exception) {
+            // ignore
+        }
         setContent {
             var theme by remember { mutableIntStateOf(store.theme) }
             val dark = theme == 1
@@ -127,7 +133,7 @@ class MainActivity : ComponentActivity() {
                 )
             }
             MaterialTheme(colorScheme = schemeFor(theme)) {
-                SavingsApp(store, theme) { t ->
+                SavingsApp(store, theme, openAdd) { t ->
                     theme = t
                     store.theme = t
                 }
@@ -215,7 +221,7 @@ fun openUrl(context: Context, url: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
+fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val entries = remember { mutableStateListOf<Entry>().apply { addAll(store.loadEntries()) } }
@@ -229,7 +235,9 @@ fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
     var syncMsg by remember { mutableStateOf("") }
     var monthStr by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
     var selStr by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
-    var showAdd by remember { mutableStateOf(false) }
+    val prefs = remember { AppPrefs(store) }
+    var showAdd by remember { mutableStateOf(openAdd) }
+    var showWelcome by rememberSaveable { mutableStateOf(prefs.popupOn.value && !openAdd) }
     var editing by remember { mutableStateOf<Entry?>(null) }
     var showSettings by remember { mutableStateOf(false) }
 
@@ -263,7 +271,7 @@ fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
                     }
                 }
                 val snapshot = goals.toList().map { g -> g to calcGoal(g, entries.toList(), entries.sumOf { it.amount }) }
-                withContext(Dispatchers.IO) { Sync.goals(url, snapshot) }
+                withContext(Dispatchers.IO) { Sync.goals(url, snapshot, prefs.emailOn.value) }
             } catch (ex: Exception) {
                 err = ex.message ?: ex.toString()
             }
@@ -291,6 +299,43 @@ fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
     val dayNet = dayEntries.sumOf { it.amount }
     val unsynced = entries.count { !it.synced } + store.pendingDeletes().size
 
+    if (showSettings) {
+        SettingsScreen(
+            theme = theme,
+            onTheme = onThemeChange,
+            greenIncome = greenIncome,
+            onGreen = { g ->
+                greenIncome = g
+                store.greenForIncome = g
+            },
+            syncUrl = syncUrl,
+            sheetUrl = sheetUrl,
+            onSyncUrl = { url ->
+                if (url != syncUrl) {
+                    syncUrl = url
+                    store.syncUrl = url
+                    for (i in entries.indices) entries[i] = entries[i].copy(synced = false, photoSent = false)
+                    persist()
+                    syncMsg = ""
+                    syncNow()
+                }
+            },
+            onSheetFound = { u ->
+                sheetUrl = u
+                store.sheetUrl = u
+            },
+            prefs = prefs,
+            entries = entries.toList(),
+            goals = goals.toList(),
+            onEditGoal = { g -> editingGoal = g },
+            onClearAll = {
+                entries.forEach { Photos.delete(context, it.photo) }
+                entries.clear()
+                persist()
+            },
+            onClose = { showSettings = false },
+        )
+    } else {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -432,6 +477,19 @@ fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
             }
         }
     }
+    }
+
+    if (showWelcome) {
+        WelcomeDialog(
+            entries = entries.toList(),
+            goals = goals.toList(),
+            onAdd = {
+                showWelcome = false
+                showAdd = true
+            },
+            onDismiss = { showWelcome = false },
+        )
+    }
 
     if (showAdd) {
         EntryDialog(
@@ -502,6 +560,7 @@ fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
                 persistGoals()
                 newGoal = false
                 editingGoal = null
+                Reminders.scheduleAll(context)
                 syncNow()
             },
             onDelete = { g ->
@@ -513,47 +572,12 @@ fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
                 persistGoals()
                 newGoal = false
                 editingGoal = null
+                Reminders.scheduleAll(context)
                 syncNow()
             },
         )
     }
 
-    if (showSettings) {
-        SettingsDialog(
-            goal = 0.0,
-            greenIncome = greenIncome,
-            syncUrl = syncUrl,
-            sheetUrl = sheetUrl,
-            theme = theme,
-            entries = entries.toList(),
-            onDismiss = { showSettings = false },
-            onSheetFound = { u ->
-                sheetUrl = u
-                store.sheetUrl = u
-            },
-            onSave = { g, green, url, t ->
-                onThemeChange(t)
-                greenIncome = green
-                store.greenForIncome = green
-                if (url != syncUrl) {
-                    syncUrl = url
-                    store.syncUrl = url
-                    // new sheet: upload everything again
-                    for (i in entries.indices) entries[i] = entries[i].copy(synced = false, photoSent = false)
-                    persist()
-                    syncMsg = ""
-                }
-                showSettings = false
-                syncNow()
-            },
-            onClearAll = {
-                entries.forEach { Photos.delete(context, it.photo) }
-                entries.clear()
-                persist()
-                showSettings = false
-            },
-        )
-    }
 }
 
 @Composable

@@ -70,7 +70,7 @@ object Sync {
         call(url, body)
     }
 
-    fun goals(url: String, list: List<Pair<Goal, GoalStat>>) {
+    fun goals(url: String, list: List<Pair<Goal, GoalStat>>, emailOn: Boolean) {
         val arr = org.json.JSONArray()
         for ((g, st) in list) {
             arr.put(
@@ -86,8 +86,10 @@ object Sync {
                     .put("finish", if (st.remaining <= 0) "已完成" else st.finish?.toString() ?: "")
                     .put("deadline", g.deadline)
                     .put("need", st.needPerMonth ?: 0.0)
+                    .put("dueDay", g.dueDay)
+                    .put("remindBefore", g.remindBefore)
             )
         }
-        call(url, JSONObject().put("action", "goals").put("goals", arr))
+        call(url, JSONObject().put("action", "goals").put("goals", arr).put("emailOn", emailOn))
     }
 }

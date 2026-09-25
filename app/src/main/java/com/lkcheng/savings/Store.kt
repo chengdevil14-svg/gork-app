@@ -29,6 +29,8 @@ data class Goal(
     val deadline: String = "", // yyyy-MM or ""
     val startDone: Double = 0.0,
     val useTotal: Boolean = false, // 存款目标: 用总存款计算进度
+    val dueDay: Int = 0, // 每月还款/存款日 1-31, 0 = 不提醒
+    val remindBefore: Int = 0, // 提前几天提醒
 )
 
 class Store(context: Context) {
@@ -109,6 +111,8 @@ class Store(context: Context) {
                         deadline = o.optString("deadline", ""),
                         startDone = o.optDouble("startDone", 0.0),
                         useTotal = o.optBoolean("useTotal", false),
+                        dueDay = o.optInt("dueDay", 0),
+                        remindBefore = o.optInt("remindBefore", 0),
                     )
                 )
             } catch (e: Exception) {
@@ -131,10 +135,17 @@ class Store(context: Context) {
                     .put("deadline", g.deadline)
                     .put("startDone", g.startDone)
                     .put("useTotal", g.useTotal)
+                    .put("dueDay", g.dueDay)
+                    .put("remindBefore", g.remindBefore)
             )
         }
         sp.edit().putString("goals", arr.toString()).apply()
     }
+
+    fun getB(key: String, def: Boolean) = sp.getBoolean(key, def)
+    fun setB(key: String, v: Boolean) = sp.edit().putBoolean(key, v).apply()
+    fun getI(key: String, def: Int) = sp.getInt(key, def)
+    fun setI(key: String, v: Int) = sp.edit().putInt(key, v).apply()
 
     var goal: Double
         get() = sp.getString("goal", "0")?.toDoubleOrNull() ?: 0.0
