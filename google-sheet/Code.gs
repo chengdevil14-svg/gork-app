@@ -10,11 +10,54 @@ const HEADERS = ['日期', '进出', '金额', '分类', '照片', '备注', '�
 const COL = { date: 1, type: 2, amount: 3, tag: 4, photo: 5, note: 6, goal: 7, id: 8 };
 const GOAL_SHEET = '目标';
 
-// 第一次先在编辑器里运行这个函数，完成授权并创建表格
+// 第一次先在编辑器里运行这个函数，完成授权并创建表格（也会开启每天 9 点的 Email 还款提醒检查）
 function setup() {
   const ss = getSpreadsheet_();
   getSheet_(ss);
+  ensureDailyTrigger_();
   Logger.log('表格已准备好：' + ss.getUrl());
+}
+
+function ensureDailyTrigger_() {
+  const exists = ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'dailyCheck');
+  if (!exists) ScriptApp.newTrigger('dailyCheck').timeBased().everyDays(1).atHour(9).create();
+}
+
+// 每天自动运行：到了还款日（或提前 N 天）就发 Email
+function dailyCheck() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('EMAIL_ON') !== 'true') return;
+  const goals = JSON.parse(props.getProperty('GOALS') || '[]');
+  const tz = Session.getScriptTimeZone();
+  const today = new Date(Utilities.formatDate(new Date(), tz, 'yyyy/MM/dd'));
+  const lines = [];
+  goals.forEach(g => {
+    if (!g.dueDay || g.remaining <= 0) return;
+    const due = nextDue_(today, g.dueDay);
+    const days = Math.round((due - today) / 86400000);
+    if (days !== (g.remindBefore || 0)) return;
+    const word = g.type === '欠款' ? '还款' : '存款';
+    const v = g.type === '欠款' ? '还' : '存';
+    let t = `【${g.name}】${days === 0 ? '今天' : days + ' 天后'}（${due.getMonth() + 1}月${due.getDate()}日）是${word}日。`;
+    if (g.monthly > 0) {
+      const left = g.monthly - g.thisMonth;
+      t += left > 0 ? `本月计划${v} $${g.monthly.toFixed(2)}，还差 $${left.toFixed(2)}。` : '本月计划已完成。';
+    }
+    t += `${g.type === '欠款' ? '还欠' : '还差'} $${Number(g.remaining).toFixed(2)}。`;
+    lines.push(t);
+  });
+  if (!lines.length) return;
+  const email = Session.getEffectiveUser().getEmail();
+  const ss = getSpreadsheet_();
+  MailApp.sendEmail(email, '💳 存钱记录：还款 / 存款日提醒', lines.join('\n\n') + '\n\n打开表格：' + ss.getUrl());
+}
+
+function nextDue_(today, day) {
+  const y = today.getFullYear(), m = today.getMonth();
+  const clamp = (yy, mm) => Math.min(day, new Date(yy, mm + 1, 0).getDate());
+  let d = new Date(y, m, clamp(y, m));
+  if (d < today) d = new Date(y, m + 1, clamp(y, m + 1));
+  return d;
 }
 
 function doGet() {
@@ -36,6 +79,12 @@ function doPost(e) {
 
     if (d.action === 'goals') {
       writeGoals_(ss, d.goals || []);
+      const props = PropertiesService.getScriptProperties();
+      props.setProperty('GOALS', JSON.stringify(d.goals || []));
+      props.setProperty('EMAIL_ON', d.emailOn ? 'true' : 'false');
+      if (d.emailOn) {
+        try { ensureDailyTrigger_(); } catch (e) { /* 需要先在编辑器运行 setup 授权 */ }
+      }
       return json_({ ok: true });
     }
 
@@ -126,10 +175,10 @@ function writeGoals_(ss, goals) {
   let gs = ss.getSheetByName(GOAL_SHEET);
   if (!gs) gs = ss.insertSheet(GOAL_SHEET);
   gs.clear();
-  const head = ['名称', '类型', '总额', '已完成', '剩余', '进度', '每月计划', '本月已完成', '预计完成', '期限', '之后每月需'];
+  const head = ['名称', '类型', '总额', '已完成', '剩余', '进度', '每月计划', '本月已完成', '预计完成', '期限', '之后每月需', '每月几号', '提前几天提醒'];
   const rows = goals.map(g => [
     g.name, g.type, g.target, g.done, g.remaining, g.pct, g.monthly || '', g.thisMonth,
-    g.finish || '', g.deadline || '', g.need || '',
+    g.finish || '', g.deadline || '', g.need || '', g.dueDay || '', g.dueDay ? (g.remindBefore || 0) : '',
   ]);
   gs.getRange(1, 1, 1, head.length).setValues([head])
     .setFontWeight('bold').setBackground('#6610F2').setFontColor('#FFFFFF');
