@@ -94,7 +94,7 @@ fun DailyCostCard(
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row {
-                Text("📅 每日成本 · ${ym.monthValue}月 $days 天", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text("${ym.year}年${ym.monthValue}月 · 共 $days 天", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 TextButton(onClick = { open = !open }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
                     Text(if (open) "收起" else "明细", fontSize = 13.sp)
                 }
@@ -155,5 +155,23 @@ private fun LineRow(c: CostLine) {
             Text(money(c.perDay), fontSize = 14.sp, fontWeight = FontWeight.Medium)
         }
         Text(c.detail, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+data class Todo(val text: String, val action: () -> Unit)
+
+@Composable
+fun TodoCard(todos: List<Todo>) {
+    if (todos.isEmpty()) return
+    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("📝 还没填写（${todos.size}）", fontWeight = FontWeight.Bold)
+            Text("填好这些，每日成本和余额会更准。点一下直接去填。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            for (t in todos) {
+                TextButton(onClick = t.action, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 0.dp)) {
+                    Text("○ " + t.text, fontSize = 14.sp, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
     }
 }

@@ -546,20 +546,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
             item {
                 AccountsStrip(accounts.toList(), entries.toList(), inc, exp) { showAccounts = true }
             }
-            item {
-                val allE = entries.toList()
-                val nowYm = YearMonth.now()
-                val outNow = -allE.filter { YearMonth.from(it.date) == nowYm }.sumOf { minOf(0.0, statAmt(it, accList)) }
-                DailyCostCard(
-                    subs.toList(),
-                    accList,
-                    goals.toList().map { g -> g to calcGoal(g, allE, total) },
-                    deposits.toList(),
-                    outNow,
-                    inc,
-                    exp,
-                )
-            }
+
             item {
                 MonthHeader(
                     month = month,
@@ -695,6 +682,52 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
             item { DepositsSummary(deposits.toList(), inc) { newDep = true } }
             items(deposits.toList(), key = { "d" + it.id }) { d ->
                 DepositRow(d, allEntries, inc) { editingDep = d }
+            }
+            item {
+                Text(
+                    "📅 每日成本",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 16.dp),
+                )
+            }
+            item {
+                val allE = entries.toList()
+                val nowYm = YearMonth.now()
+                val outNow = -allE.filter { YearMonth.from(it.date) == nowYm }.sumOf { minOf(0.0, statAmt(it, accList)) }
+                DailyCostCard(
+                    subs.toList(),
+                    accList,
+                    goals.toList().map { g -> g to calcGoal(g, allE, total) },
+                    deposits.toList(),
+                    outNow,
+                    inc,
+                    exp,
+                )
+            }
+            item {
+                val todos = ArrayList<Todo>()
+                val live = accList.filter { !it.archived }
+                if (live.size <= 1) todos.add(Todo("新增你的银行卡 / 信用卡 / 交通卡账户") { showAccounts = true })
+                for (a in live.filter { it.opening == 0.0 && entries.none { e -> accOf(e, accList) == a.id || e.toAccountId == a.id } }) {
+                    todos.add(Todo("「${a.name}」还没填目前余额") { showAccounts = true })
+                }
+                for (a in live.filter { it.type == 2 && it.limit <= 0 }) todos.add(Todo("信用卡「${a.name}」还没填额度") { showAccounts = true })
+                for (a in live.filter { it.type == TYPE_CARD && !it.commuteOn }) todos.add(Todo("交通卡「${a.name}」可以设置通勤自动扣款") { showAccounts = true })
+                if (subs.none { it.isIncome && it.active }) todos.add(Todo("加入固定收入（工资）") { newSub = true })
+                if (subs.none { !it.isIncome && it.active }) todos.add(Todo("加入固定支出（房租、电话费、订阅）") { newSub = true })
+                for (g in goals.filter { it.debt }) {
+                    if (g.rate <= 0) todos.add(Todo("欠款「${g.name}」还没填年利率") { editingGoal = g })
+                    if (g.monthly <= 0) todos.add(Todo("欠款「${g.name}」还没填每月还多少") { editingGoal = g })
+                    if (g.dueDay <= 0) todos.add(Todo("欠款「${g.name}」还没填每月还款日") { editingGoal = g })
+                }
+                if (!prefs.remOn.value) todos.add(Todo("开启提醒通知") { showSettings = true })
+                if (syncUrl.isBlank()) todos.add(Todo("连接 Google Sheet 同步（备份）") { showSettings = true })
+                if (entries.none { it.date == LocalDate.now() }) todos.add(Todo("今天还没记账") {
+                    prefill = null
+                    showAdd = true
+                })
+                TodoCard(todos)
             }
         }
     }
