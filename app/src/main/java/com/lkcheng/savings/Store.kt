@@ -13,6 +13,9 @@ data class Entry(
     val date: LocalDate,
     val amount: Double, // positive = 存入, negative = 取出
     val note: String,
+    val photo: String = "", // file name under filesDir/photos, "" = none
+    val synced: Boolean = false,
+    val photoSent: Boolean = false,
 )
 
 class Store(context: Context) {
@@ -34,6 +37,9 @@ class Store(context: Context) {
                         date = LocalDate.parse(o.getString("date")),
                         amount = o.getDouble("amount"),
                         note = o.optString("note", ""),
+                        photo = o.optString("photo", ""),
+                        synced = o.optBoolean("synced", false),
+                        photoSent = o.optBoolean("photoSent", false),
                     )
                 )
             } catch (e: Exception) {
@@ -52,6 +58,9 @@ class Store(context: Context) {
                     .put("date", e.date.toString())
                     .put("amount", e.amount)
                     .put("note", e.note)
+                    .put("photo", e.photo)
+                    .put("synced", e.synced)
+                    .put("photoSent", e.photoSent)
             )
         }
         sp.edit().putString("entries", arr.toString()).apply()
@@ -69,6 +78,44 @@ class Store(context: Context) {
         set(value) {
             sp.edit().putBoolean("greenIncome", value).apply()
         }
+
+    /** 0 白蓝, 1 深夜, 2 暖金 */
+    var theme: Int
+        get() = sp.getInt("theme", 0)
+        set(value) {
+            sp.edit().putInt("theme", value).apply()
+        }
+
+    var syncUrl: String
+        get() = sp.getString("syncUrl", "") ?: ""
+        set(value) {
+            sp.edit().putString("syncUrl", value.trim()).apply()
+        }
+
+    var sheetUrl: String
+        get() = sp.getString("sheetUrl", "") ?: ""
+        set(value) {
+            sp.edit().putString("sheetUrl", value).apply()
+        }
+
+    fun pendingDeletes(): List<Long> {
+        val arr = try {
+            JSONArray(sp.getString("pendingDeletes", "[]") ?: "[]")
+        } catch (e: Exception) {
+            JSONArray()
+        }
+        return (0 until arr.length()).map { arr.optLong(it) }.filter { it != 0L }
+    }
+
+    private fun setPendingDeletes(ids: List<Long>) {
+        val arr = JSONArray()
+        ids.forEach { arr.put(it) }
+        sp.edit().putString("pendingDeletes", arr.toString()).apply()
+    }
+
+    fun addPendingDelete(id: Long) = setPendingDeletes(pendingDeletes() + id)
+
+    fun removePendingDelete(id: Long) = setPendingDeletes(pendingDeletes().filter { it != id })
 }
 
 fun money(v: Double): String = "$" + String.format(Locale.US, "%,.2f", abs(v))

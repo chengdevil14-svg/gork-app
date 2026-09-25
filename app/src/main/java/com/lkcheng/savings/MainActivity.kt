@@ -1,10 +1,17 @@
 package com.lkcheng.savings
 
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,9 +31,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -37,6 +46,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -54,17 +64,22 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -72,6 +87,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.FileProvider
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.time.LocalDate
 import java.time.YearMonth
 
@@ -81,7 +103,7 @@ private val RED = Color(0xFFDC2626)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val crash = java.io.File(filesDir, "crash.txt")
+        val crash = File(filesDir, "crash.txt")
         if (crash.exists()) {
             showCrash(crash)
             return
@@ -89,23 +111,25 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val store = Store(applicationContext)
         setContent {
-            val dark = isSystemInDarkTheme()
-            val scheme = if (dark) {
-                darkColorScheme(primary = Color(0xFF60A5FA))
-            } else {
-                lightColorScheme(
-                    primary = Color(0xFF2563EB),
-                    primaryContainer = Color(0xFFDBEAFE),
-                    onPrimaryContainer = Color(0xFF1E3A8A),
+            var theme by remember { mutableIntStateOf(store.theme) }
+            val dark = theme == 1
+            LaunchedEffect(dark) {
+                val t = android.graphics.Color.TRANSPARENT
+                enableEdgeToEdge(
+                    statusBarStyle = if (dark) SystemBarStyle.dark(t) else SystemBarStyle.light(t, t),
+                    navigationBarStyle = if (dark) SystemBarStyle.dark(t) else SystemBarStyle.light(t, t),
                 )
             }
-            MaterialTheme(colorScheme = scheme) {
-                SavingsApp(store)
+            MaterialTheme(colorScheme = schemeFor(theme)) {
+                SavingsApp(store, theme) { t ->
+                    theme = t
+                    store.theme = t
+                }
             }
         }
     }
 
-    private fun showCrash(file: java.io.File) {
+    private fun showCrash(file: File) {
         val text = try { file.readText() } catch (e: Exception) { "无法读取错误信息" }
         val pad = (16 * resources.displayMetrics.density).toInt()
         val layout = android.widget.LinearLayout(this).apply {
@@ -139,12 +163,62 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+val THEME_NAMES = listOf("白蓝", "深夜", "暖金")
+val THEME_SWATCH = listOf(Color(0xFF6610F2), Color(0xFF1F2937), Color(0xFFD97706))
+
+fun schemeFor(theme: Int) = when (theme) {
+    1 -> darkColorScheme(
+        primary = Color(0xFF8AB4FF),
+        onPrimary = Color(0xFF0B1B3A),
+        primaryContainer = Color(0xFF1E2A44),
+        onPrimaryContainer = Color(0xFFDCE6FF),
+        background = Color(0xFF0E1117),
+        surface = Color(0xFF0E1117),
+        surfaceContainerHighest = Color(0xFF1A1F29),
+        surfaceContainerHigh = Color(0xFF1F2530),
+    )
+    2 -> lightColorScheme(
+        primary = Color(0xFFB45309),
+        onPrimary = Color.White,
+        primaryContainer = Color(0xFFFDEBC8),
+        onPrimaryContainer = Color(0xFF6B2E05),
+        background = Color(0xFFFFFAF0),
+        surface = Color(0xFFFFFAF0),
+        surfaceContainerHighest = Color(0xFFF7EEDD),
+        surfaceContainerHigh = Color(0xFFFFF4E0),
+    )
+    else -> lightColorScheme(
+        primary = Color(0xFF6610F2),
+        onPrimary = Color.White,
+        primaryContainer = Color(0xFFEDE3FF),
+        onPrimaryContainer = Color(0xFF32077A),
+        background = Color.White,
+        surface = Color.White,
+        surfaceContainerHighest = Color(0xFFF4F1FC),
+        surfaceContainerHigh = Color(0xFFFAF8FF),
+    )
+}
+
+fun openUrl(context: Context, url: String) {
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    } catch (e: Exception) {
+        // no browser
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SavingsApp(store: Store) {
+fun SavingsApp(store: Store, theme: Int, onThemeChange: (Int) -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val entries = remember { mutableStateListOf<Entry>().apply { addAll(store.loadEntries()) } }
     var goal by remember { mutableDoubleStateOf(store.goal) }
     var greenIncome by remember { mutableStateOf(store.greenForIncome) }
+    var syncUrl by remember { mutableStateOf(store.syncUrl) }
+    var sheetUrl by remember { mutableStateOf(store.sheetUrl) }
+    var syncing by remember { mutableStateOf(false) }
+    var syncMsg by remember { mutableStateOf("") }
     var monthStr by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
     var selStr by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
     var showAdd by remember { mutableStateOf(false) }
@@ -157,6 +231,38 @@ fun SavingsApp(store: Store) {
     val exp = if (greenIncome) RED else GREEN
 
     fun persist() = store.saveEntries(entries.toList())
+
+    fun syncNow() {
+        val url = syncUrl
+        if (syncing || url.isBlank()) return
+        syncing = true
+        syncMsg = "同步中…"
+        scope.launch {
+            var err: String? = null
+            try {
+                for (id in store.pendingDeletes()) {
+                    withContext(Dispatchers.IO) { Sync.delete(url, id) }
+                    store.removePendingDelete(id)
+                }
+                for (e in entries.filter { !it.synced }.toList()) {
+                    withContext(Dispatchers.IO) { Sync.upsert(context, url, e) }
+                    val i = entries.indexOfFirst { it.id == e.id }
+                    if (i >= 0 && entries[i] == e) {
+                        entries[i] = e.copy(synced = true, photoSent = e.photo.isNotEmpty())
+                        persist()
+                    }
+                }
+            } catch (ex: Exception) {
+                err = ex.message ?: ex.toString()
+            }
+            syncMsg = if (err == null) "已同步到 Google Sheet" else "同步失败：$err"
+            syncing = false
+            // edits made while syncing get picked up
+            if (err == null && entries.any { !it.synced }) syncNow()
+        }
+    }
+
+    LaunchedEffect(Unit) { syncNow() }
 
     fun goToMonth(m: YearMonth) {
         monthStr = m.toString()
@@ -171,12 +277,26 @@ fun SavingsApp(store: Store) {
     val daily = monthEntries.groupBy { it.date }.mapValues { (_, v) -> v.sumOf { it.amount } }
     val dayEntries = entries.filter { it.date == selected }.sortedByDescending { it.id }
     val dayNet = dayEntries.sumOf { it.amount }
+    val unsynced = entries.count { !it.synced } + store.pendingDeletes().size
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("存钱记录", fontWeight = FontWeight.Bold) },
                 actions = {
+                    if (syncUrl.isNotBlank()) {
+                        if (syncing) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            TextButton(onClick = { syncNow() }) {
+                                Text(
+                                    if (unsynced > 0) "☁ 待同步 $unsynced" else "☁ 已同步",
+                                    color = if (syncMsg.startsWith("同步失败")) exp else MaterialTheme.colorScheme.primary,
+                                    fontSize = 13.sp,
+                                )
+                            }
+                        }
+                    }
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Filled.Settings, contentDescription = "设置")
                     }
@@ -200,6 +320,15 @@ fun SavingsApp(store: Store) {
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 100.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (syncMsg.startsWith("同步失败")) {
+                item {
+                    Text(
+                        syncMsg + "（点右上角重试）",
+                        color = exp,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
             item {
                 SummaryCard(total, goal, month, monthIn, monthOut, inc, exp)
             }
@@ -246,7 +375,7 @@ fun SavingsApp(store: Store) {
                 }
             }
             items(dayEntries, key = { it.id }) { e ->
-                EntryRow(e, inc, exp) { editing = e }
+                EntryRow(e, inc, exp, showSync = syncUrl.isNotBlank()) { editing = e }
             }
         }
     }
@@ -262,6 +391,7 @@ fun SavingsApp(store: Store) {
                 entries.add(e)
                 persist()
                 showAdd = false
+                syncNow()
             },
             onDelete = {},
         )
@@ -277,14 +407,22 @@ fun SavingsApp(store: Store) {
             onDismiss = { editing = null },
             onSave = { e ->
                 val i = entries.indexOfFirst { it.id == e.id }
-                if (i >= 0) entries[i] = e
+                if (i >= 0) {
+                    val old = entries[i]
+                    if (old.photo.isNotEmpty() && old.photo != e.photo) Photos.delete(context, old.photo)
+                    entries[i] = e
+                }
                 persist()
                 editing = null
+                syncNow()
             },
             onDelete = { e ->
                 entries.removeAll { it.id == e.id }
+                Photos.delete(context, e.photo)
                 persist()
+                if (syncUrl.isNotBlank()) store.addPendingDelete(e.id)
                 editing = null
+                syncNow()
             },
         )
     }
@@ -293,16 +431,34 @@ fun SavingsApp(store: Store) {
         SettingsDialog(
             goal = goal,
             greenIncome = greenIncome,
+            syncUrl = syncUrl,
+            sheetUrl = sheetUrl,
+            theme = theme,
             entries = entries.toList(),
             onDismiss = { showSettings = false },
-            onSave = { g, green ->
+            onSheetFound = { u ->
+                sheetUrl = u
+                store.sheetUrl = u
+            },
+            onSave = { g, green, url, t ->
+                onThemeChange(t)
                 goal = g
                 greenIncome = green
                 store.goal = g
                 store.greenForIncome = green
+                if (url != syncUrl) {
+                    syncUrl = url
+                    store.syncUrl = url
+                    // new sheet: upload everything again
+                    for (i in entries.indices) entries[i] = entries[i].copy(synced = false, photoSent = false)
+                    persist()
+                    syncMsg = ""
+                }
                 showSettings = false
+                syncNow()
             },
             onClearAll = {
+                entries.forEach { Photos.delete(context, it.photo) }
                 entries.clear()
                 persist()
                 showSettings = false
@@ -347,7 +503,7 @@ fun SummaryCard(
                         .height(8.dp)
                         .clip(RoundedCornerShape(4.dp)),
                     color = inc,
-                    trackColor = Color.White.copy(alpha = 0.6f),
+                    trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
                 )
                 Spacer(Modifier.height(6.dp))
                 val remain = goal - total
@@ -494,7 +650,23 @@ fun CalendarGrid(
 }
 
 @Composable
-fun EntryRow(e: Entry, inc: Color, exp: Color, onClick: () -> Unit) {
+fun PhotoThumb(name: String, sizeDp: Int, sample: Int, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val bmp = remember(name, sample) { Photos.load(context, name, sample)?.asImageBitmap() }
+    if (bmp != null) {
+        Image(
+            bitmap = bmp,
+            contentDescription = "照片",
+            contentScale = ContentScale.Crop,
+            modifier = modifier
+                .size(sizeDp.dp)
+                .clip(RoundedCornerShape(8.dp)),
+        )
+    }
+}
+
+@Composable
+fun EntryRow(e: Entry, inc: Color, exp: Color, showSync: Boolean, onClick: () -> Unit) {
     val isIn = e.amount >= 0
     val color = if (isIn) inc else exp
     Card(
@@ -504,17 +676,21 @@ fun EntryRow(e: Entry, inc: Color, exp: Color, onClick: () -> Unit) {
         shape = RoundedCornerShape(16.dp),
     ) {
         Row(
-            Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(color.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(if (isIn) "＋" else "－", color = color, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            if (e.photo.isNotEmpty()) {
+                PhotoThumb(e.photo, 44, 8)
+            } else {
+                Box(
+                    Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(color.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(if (isIn) "＋" else "－", color = color, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
@@ -524,8 +700,11 @@ fun EntryRow(e: Entry, inc: Color, exp: Color, onClick: () -> Unit) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                val parts = mutableListOf(if (isIn) "存入" else "取出")
+                if (e.photo.isNotEmpty()) parts.add("📷")
+                if (showSync) parts.add(if (e.synced) "☁ 已同步" else "☁ 待同步")
                 Text(
-                    if (isIn) "存入" else "取出",
+                    parts.joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -551,6 +730,37 @@ fun TypeButton(text: String, active: Boolean, color: Color, modifier: Modifier, 
 }
 
 @Composable
+fun PhotoViewer(name: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val bmp = remember(name) { Photos.load(context, name, 1)?.asImageBitmap() }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .clickable(onClick = onDismiss),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (bmp != null) {
+                Image(
+                    bitmap = bmp,
+                    contentDescription = "照片",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            Text(
+                "点任意处关闭",
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(32.dp),
+            )
+        }
+    }
+}
+
+@Composable
 fun EntryDialog(
     initial: Entry?,
     defaultDate: LocalDate,
@@ -560,18 +770,40 @@ fun EntryDialog(
     onSave: (Entry) -> Unit,
     onDelete: (Entry) -> Unit,
 ) {
+    val context = LocalContext.current
     var isIn by remember { mutableStateOf(initial?.let { it.amount >= 0 } ?: true) }
     var amountText by remember { mutableStateOf(initial?.let { plainNumber(kotlin.math.abs(it.amount)) } ?: "") }
     var note by remember { mutableStateOf(initial?.note ?: "") }
+    var photo by remember { mutableStateOf(initial?.photo ?: "") }
     var confirmDelete by remember { mutableStateOf(false) }
+    var viewPhoto by remember { mutableStateOf(false) }
+    var photoError by remember { mutableStateOf(false) }
     val amount = amountText.toDoubleOrNull()
     val valid = amount != null && amount > 0
+
+    val camFile = remember { File(context.cacheDir, "camera.jpg") }
+    val camUri = remember { FileProvider.getUriForFile(context, context.packageName + ".files", camFile) }
+    val camLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        if (ok) {
+            val name = Photos.import(context, camUri)
+            if (name != null) photo = name else photoError = true
+        }
+    }
+    val pickLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            val name = Photos.import(context, uri)
+            if (name != null) photo = name else photoError = true
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "记一笔" else "编辑记录") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 Text(
                     "${defaultDate.year}年${defaultDate.monthValue}月${defaultDate.dayOfMonth}日 ${weekdayCn(defaultDate)}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -605,6 +837,44 @@ fun EntryDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (photo.isNotEmpty()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PhotoThumb(photo, 72, 4, Modifier.clickable { viewPhoto = true })
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            TextButton(onClick = { viewPhoto = true }) { Text("查看大图") }
+                            TextButton(onClick = { photo = "" }) {
+                                Text("移除照片", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                photoError = false
+                                try {
+                                    camLauncher.launch(camUri)
+                                } catch (e: Exception) {
+                                    photoError = true
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("📷 拍照") }
+                        OutlinedButton(
+                            onClick = {
+                                photoError = false
+                                pickLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("🖼 相册") }
+                    }
+                }
+                if (photoError) {
+                    Text("照片读取失败，请再试一次", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
                 if (initial != null) {
                     HorizontalDivider()
                     if (confirmDelete) {
@@ -629,12 +899,16 @@ fun EntryDialog(
                 onClick = {
                     val a = amountText.toDoubleOrNull()
                     if (a != null && a > 0) {
+                        val samePhoto = initial != null && initial.photo == photo
                         onSave(
                             Entry(
                                 id = initial?.id ?: System.currentTimeMillis(),
                                 date = defaultDate,
                                 amount = if (isIn) a else -a,
                                 note = note.trim(),
+                                photo = photo,
+                                synced = false,
+                                photoSent = samePhoto && initial?.photoSent == true,
                             )
                         )
                     }
@@ -645,27 +919,76 @@ fun EntryDialog(
             TextButton(onClick = onDismiss) { Text("取消") }
         },
     )
+
+    if (viewPhoto && photo.isNotEmpty()) {
+        PhotoViewer(photo) { viewPhoto = false }
+    }
 }
 
 @Composable
 fun SettingsDialog(
     goal: Double,
     greenIncome: Boolean,
+    syncUrl: String,
+    sheetUrl: String,
+    theme: Int,
     entries: List<Entry>,
     onDismiss: () -> Unit,
-    onSave: (Double, Boolean) -> Unit,
+    onSheetFound: (String) -> Unit,
+    onSave: (Double, Boolean, String, Int) -> Unit,
     onClearAll: () -> Unit,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var goalText by remember { mutableStateOf(if (goal > 0) plainNumber(goal) else "") }
     var green by remember { mutableStateOf(greenIncome) }
+    var themeSel by remember { mutableIntStateOf(theme) }
+    var url by remember { mutableStateOf(syncUrl) }
+    var sheet by remember { mutableStateOf(sheetUrl) }
+    var testMsg by remember { mutableStateOf("") }
+    var testing by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("设置") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Text("主题", fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (i in THEME_NAMES.indices) {
+                        val sel = themeSel == i
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(
+                                    if (sel) 2.dp else 1.dp,
+                                    if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                    RoundedCornerShape(12.dp),
+                                )
+                                .clickable { themeSel = i }
+                                .padding(vertical = 10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(THEME_SWATCH[i])
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                THEME_NAMES[i],
+                                fontSize = 13.sp,
+                                fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal,
+                            )
+                        }
+                    }
+                }
                 OutlinedTextField(
                     value = goalText,
                     onValueChange = { s -> goalText = s.filter { it.isDigit() || it == '.' } },
@@ -686,6 +1009,52 @@ fun SettingsDialog(
                     }
                     Switch(checked = green, onCheckedChange = { green = it })
                 }
+                HorizontalDivider()
+                Text("Google Sheet 同步", fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it.trim(); testMsg = "" },
+                    label = { Text("脚本网址（https://script.google.com/…）") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        enabled = url.isNotBlank() && !testing,
+                        onClick = {
+                            testing = true
+                            testMsg = "连接中…"
+                            val u = url
+                            scope.launch {
+                                testMsg = try {
+                                    val res = withContext(Dispatchers.IO) { Sync.ping(u) }
+                                    val s = res.optString("sheet", "")
+                                    if (s.isNotEmpty()) {
+                                        sheet = s
+                                        onSheetFound(s)
+                                    }
+                                    "✅ 连接成功"
+                                } catch (e: Exception) {
+                                    "❌ " + (e.message ?: "连接失败")
+                                }
+                                testing = false
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("测试连接") }
+                    OutlinedButton(
+                        enabled = sheet.isNotEmpty(),
+                        onClick = { openUrl(context, sheet) },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("打开表格") }
+                }
+                if (testMsg.isNotEmpty()) Text(testMsg, fontSize = 13.sp)
+                Text(
+                    "保存后会自动把全部记录（含照片）上传到表格，之后每记一笔都会自动同步。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 HorizontalDivider()
                 OutlinedButton(
                     onClick = {
@@ -709,7 +1078,7 @@ fun SettingsDialog(
                 ) { Text("导出全部记录（${entries.size} 条）") }
                 if (confirmClear) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("清空全部记录？无法恢复", modifier = Modifier.weight(1f))
+                        Text("清空 app 里的全部记录？无法恢复（表格不受影响）", modifier = Modifier.weight(1f))
                         TextButton(onClick = onClearAll) {
                             Text("清空", color = MaterialTheme.colorScheme.error)
                         }
@@ -722,7 +1091,7 @@ fun SettingsDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(goalText.toDoubleOrNull() ?: 0.0, green) }) { Text("保存") }
+            TextButton(onClick = { onSave(goalText.toDoubleOrNull() ?: 0.0, green, url.trim(), themeSel) }) { Text("保存") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }
