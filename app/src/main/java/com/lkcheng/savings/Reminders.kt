@@ -207,6 +207,12 @@ object Reminders {
             }
             if (at != null) setAlarm(ctx, kind, at) else cancel(ctx, kind)
         }
+        for (d in st.loadDeposits()) {
+            val kind = "dep:" + d.id
+            val mat = maturityOf(d)
+            val at = mat?.atTime(h, m)
+            if (dueOn && d.active && at != null && at.isAfter(LocalDateTime.now())) setAlarm(ctx, kind, at) else cancel(ctx, kind)
+        }
         val subOn = master && st.getB(K.SUB_ON, true)
         val sh = st.getI(K.SUB_H, 10)
         val sm = st.getI(K.SUB_M, 0)
@@ -266,6 +272,17 @@ object Reminders {
         Cur.load(st)
         if (kind.startsWith("sub:")) {
             fireSub(ctx, st, kind)
+            return
+        }
+        if (kind.startsWith("dep:")) {
+            if (!st.getB(K.DUE_ON, true)) return
+            val id = kind.removePrefix("dep:").toLongOrNull() ?: return
+            val d = st.loadDeposits().firstOrNull { it.id == id && it.active } ?: return
+            val stt = calcDeposit(d)
+            val text = "今天到期。本金 ${moneyC(d.principal, d.currency)}，利息约 ${moneyC(stt.atMaturity, d.currency)}，" +
+                "本息合计 ${moneyC(d.principal + stt.atMaturity, d.currency)}。" + if (d.autoRenew) "已设自动续存。" else "记得处理（续存或取出）。"
+            val alarmStyle = st.getI(K.DUE_STYLE, 0) == 1
+            notify(ctx, kind.hashCode(), if (alarmStyle) CH_DUE_ALARM else CH_DUE, "💰 ${d.name} 到期提醒", text, false, alarmStyle)
             return
         }
         val entries = st.loadEntries()

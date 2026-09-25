@@ -270,6 +270,19 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
     fun persistAccounts() = store.saveAccounts(accounts.toList())
     fun persistDeposits() = store.saveDeposits(deposits.toList())
 
+    fun runCommute() {
+        val (na, ne) = processCommute(accounts.toList())
+        if (na != accounts.toList()) {
+            accounts.clear()
+            accounts.addAll(na)
+            persistAccounts()
+        }
+        if (ne.isNotEmpty()) {
+            entries.addAll(ne)
+            persist()
+        }
+    }
+
     fun runDeposits() {
         val (nd, ne) = processDeposits(deposits.toList(), accounts.toList())
         if (nd != deposits.toList()) {
@@ -349,6 +362,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
     LaunchedEffect(Unit) {
         runSubs()
         runDeposits()
+        runCommute()
         if (sharedUri != null) startScan(sharedUri)
         syncNow()
     }
@@ -360,12 +374,13 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
     }
 
     val total = netWorth(entries, accounts)
-    val monthEntries = entries.filter { YearMonth.from(it.date) == month && !it.isTransfer }
-    val monthIn = monthEntries.filter { it.amount > 0 }.sumOf { it.base }
-    val monthOut = -monthEntries.filter { it.amount < 0 }.sumOf { it.base }
-    val daily = monthEntries.groupBy { it.date }.mapValues { (_, v) -> v.sumOf { it.base } }
+    val accList = accounts.toList()
+    val monthEntries = entries.filter { YearMonth.from(it.date) == month && statAmt(it, accList) != 0.0 }
+    val monthIn = monthEntries.sumOf { maxOf(0.0, statAmt(it, accList)) }
+    val monthOut = -monthEntries.sumOf { minOf(0.0, statAmt(it, accList)) }
+    val daily = monthEntries.groupBy { it.date }.mapValues { (_, v) -> v.sumOf { statAmt(it, accList) } }
     val dayEntries = entries.filter { it.date == selected }.sortedByDescending { it.id }
-    val dayNet = dayEntries.sumOf { it.base }
+    val dayNet = dayEntries.sumOf { statAmt(it, accList) }
     val unsynced = entries.count { !it.synced } + store.pendingDeletes().size
 
     val scanPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -382,6 +397,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                 val i = accounts.indexOfFirst { it.id == a.id }
                 if (i >= 0) accounts[i] = a else accounts.add(a)
                 persistAccounts()
+                runCommute()
             },
             onDelete = { a ->
                 accounts.removeAll { it.id == a.id }
@@ -1340,7 +1356,12 @@ fun EntryDialog(
                     if (liveAccounts.size < 2) {
                         Text("要先在「账户」里加第二个账户才能转账", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
                     }
-                    Text("转账不算收入也不算支出，只是钱从一个账户移到另一个。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (typeOf(toAccId, accounts) == TYPE_CARD) "充值到交通卡 / 储值卡：算作支出（钱拿不回来）。之后刷卡只扣卡余额。"
+                        else "转账不算收入也不算支出，只是钱从一个账户移到另一个。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 if (!transfer) {
                     TagPicker(tag, if (isIn) inTags else outTags) { tag = it }
@@ -1451,7 +1472,7 @@ fun EntryDialog(
                                 photo = photo,
                                 synced = false,
                                 photoSent = samePhoto && initial?.photoSent == true,
-                                tag = if (transfer) "转账" else tag.trim(),
+                                tag = if (transfer) (if (typeOf(toAccId, accounts) == TYPE_CARD) "交通卡充值" else "转账") else tag.trim(),
                                 goalId = goalId,
                                 currency = cur,
                                 accountId = accId,

@@ -82,8 +82,76 @@ fun balanceOf(a: Account, entries: List<Entry>, accounts: List<Account>): Double
 }
 
 /** Net worth in the settlement currency = all account balances. */
+const val TYPE_CARD = 5 // 交通卡 / 储值卡：充值就算花掉了
+
+fun typeOf(id: Long, accounts: List<Account>) = accounts.firstOrNull { it.id == id }?.type ?: 0
+
+/**
+ * How much an entry counts as income(+)/expense(−) in stats, in settlement currency.
+ * - Top-up into a transit/stored-value card = expense.
+ * - Spending from that card = 0 (already counted at top-up; it only lowers the card balance).
+ * - Other transfers = 0.
+ */
+fun statAmt(e: Entry, accounts: List<Account>): Double {
+    val fromCard = typeOf(accOf(e, accounts), accounts) == TYPE_CARD
+    if (e.isTransfer) {
+        val toCard = typeOf(e.toAccountId, accounts) == TYPE_CARD
+        return if (toCard && !fromCard) e.base else 0.0
+    }
+    return if (fromCard) 0.0 else e.base
+}
+
+/** Money you actually have: excludes transit-card balances (can't be cashed out). */
 fun netWorth(entries: List<Entry>, accounts: List<Account>): Double =
-    entries.filter { !it.isTransfer }.sumOf { it.base } + accounts.sumOf { Fx.toBase(it.opening, it.currency) }
+    entries.sumOf { statAmt(it, accounts) } +
+        accounts.filter { it.type != TYPE_CARD }.sumOf { Fx.toBase(it.opening, it.currency) }
+
+fun isWorkDay(a: Account, d: java.time.LocalDate): Boolean {
+    val byWeek = a.weekdays.contains(d.dayOfWeek.value.toString())
+    val flipped = a.exceptions.split(',').contains(d.toString())
+    return byWeek != flipped
+}
+
+/** Creates daily commute deductions on transit cards up to today. */
+fun processCommute(accounts: List<Account>, today: java.time.LocalDate = java.time.LocalDate.now()): Pair<List<Account>, List<Entry>> {
+    val out = ArrayList<Entry>()
+    var seed = System.currentTimeMillis() + 900
+    val accs = accounts.map { a ->
+        if (a.type != TYPE_CARD || !a.commuteOn || a.fare <= 0) return@map a
+        var d = (parseDate(a.commuteUntil) ?: today.minusDays(1)).plusDays(1)
+        var last: java.time.LocalDate? = null
+        var g = 0
+        while (!d.isAfter(today) && g < 400) {
+            if (isWorkDay(a, d)) {
+                out.add(Entry(id = seed++, date = d, amount = -a.fare, note = "通勤", tag = "交通", currency = a.currency, accountId = a.id))
+            }
+            last = d
+            d = d.plusDays(1)
+            g++
+        }
+        if (last != null) a.copy(commuteUntil = last.toString()) else a
+    }
+    return accs to out
+}
+
+/** Work days left that the current balance covers. */
+fun daysCovered(a: Account, balance: Double, from: java.time.LocalDate = java.time.LocalDate.now().plusDays(1)): Pair<Int, java.time.LocalDate?> {
+    if (a.fare <= 0 || balance <= 0) return 0 to null
+    var left = balance
+    var d = from
+    var n = 0
+    var g = 0
+    while (g < 730) {
+        if (isWorkDay(a, d)) {
+            if (left < a.fare) return n to d
+            left -= a.fare
+            n++
+        }
+        d = d.plusDays(1)
+        g++
+    }
+    return n to null
+}
 
 fun accName(id: Long, accounts: List<Account>): String =
     accounts.firstOrNull { it.id == id }?.let { accIcon(it) + " " + it.name } ?: ""
@@ -173,6 +241,9 @@ fun AccountsScreen(
                             if (b < 0) Fx.toBase(-b, a.currency) else 0.0
                         }
                         if (debt > 0) Text("其中欠款（信用卡等）${money(debt)}", fontSize = 13.sp, color = exp)
+                        if (accounts.any { it.type == TYPE_CARD }) {
+                            Text("交通卡 / 储值卡余额不算在内（充值时已算支出）", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
                 for (t in ACCOUNT_TYPES.indices) {
@@ -227,7 +298,19 @@ fun AccountsScreen(
                         }
                         Spacer(Modifier.height(6.dp))
                         Text("本月 存入 ${moneyC(mIn, detail.currency)} · 取出 ${moneyC(mOut, detail.currency)}", fontSize = 13.sp)
+                        if (detail.type == TYPE_CARD && detail.commuteOn && detail.fare > 0) {
+                            val (n, runOut) = daysCovered(detail, b)
+                            Text(
+                                "🚇 够用约 $n 个上班日" + (runOut?.let { "，${it.monthValue}月${it.dayOfMonth}日前记得充值" } ?: ""),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (n <= 5) exp else MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
                     }
+                }
+                if (detail.type == TYPE_CARD) {
+                    CommuteCard(detail) { onSave(it) }
                 }
                 Text("最近记录", fontWeight = FontWeight.Bold)
                 if (mine.isEmpty()) {
@@ -443,4 +526,115 @@ fun AccountDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
+}
+
+@Composable
+fun CommuteCard(a: Account, onSave: (Account) -> Unit) {
+    var on by remember(a.id) { mutableStateOf(a.commuteOn) }
+    var fareText by remember(a.id) { mutableStateOf(if (a.fare > 0) plainNumber(a.fare) else "") }
+    var week by remember(a.id) { mutableStateOf(a.weekdays) }
+    var exc by remember(a.id) { mutableStateOf(a.exceptions.split(',').filter { it.isNotBlank() }.toSet()) }
+    var ymStr by remember(a.id) { mutableStateOf(YearMonth.now().toString()) }
+    var saved by remember(a.id) { mutableStateOf("") }
+    val ym = YearMonth.parse(ymStr)
+    val draft = a.copy(commuteOn = on, fare = fareText.toDoubleOrNull() ?: 0.0, weekdays = week, exceptions = exc.joinToString(","))
+
+    Card(shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("🚇 通勤自动扣款", fontWeight = FontWeight.Bold)
+                    Text("上班日自动从卡里扣车费（只扣卡余额，不算支出）", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = on, onCheckedChange = { on = it; saved = "" })
+            }
+            if (on) {
+                OutlinedTextField(
+                    value = fareText,
+                    onValueChange = { v -> fareText = v.filter { it.isDigit() || it == '.' }; saved = "" },
+                    label = { Text("每个上班日扣多少（来回）") },
+                    prefix = { Text(a.currency + " ") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("每周哪几天上班", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val names = listOf("一", "二", "三", "四", "五", "六", "日")
+                    for (i in 1..7) {
+                        val sel = week.contains(i.toString())
+                        FilterChip(
+                            selected = sel,
+                            onClick = {
+                                week = if (sel) week.replace(i.toString(), "") else (week + i).toCharArray().sorted().joinToString("")
+                                saved = ""
+                            },
+                            label = { Text(names[i - 1], fontSize = 13.sp) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { ymStr = ym.minusMonths(1).toString() }) { Text("‹") }
+                    Text("${ym.year}年${ym.monthValue}月 · 点日期切换上班 / 休息", fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { ymStr = ym.plusMonths(1).toString() }) { Text("›") }
+                }
+                val offset = ym.atDay(1).dayOfWeek.value - 1
+                val days = ym.lengthOfMonth()
+                val rows = (offset + days + 6) / 7
+                var workCount = 0
+                for (d in 1..days) if (isWorkDay(draft, ym.atDay(d))) workCount++
+                Column {
+                    for (r in 0 until rows) {
+                        Row(Modifier.fillMaxWidth()) {
+                            for (c in 0 until 7) {
+                                val d = r * 7 + c - offset + 1
+                                Box(Modifier.weight(1f).height(38.dp).padding(2.dp), contentAlignment = Alignment.Center) {
+                                    if (d in 1..days) {
+                                        val date = ym.atDay(d)
+                                        val work = isWorkDay(draft, date)
+                                        val changed = exc.contains(date.toString())
+                                        Box(
+                                            Modifier
+                                                .fillMaxSize()
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(if (work) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+                                                .clickable {
+                                                    val k = date.toString()
+                                                    exc = if (exc.contains(k)) exc - k else exc + k
+                                                    saved = ""
+                                                },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Text(
+                                                (if (changed) "•" else "") + d,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (work) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (work) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                val fare = fareText.toDoubleOrNull() ?: 0.0
+                Text(
+                    "本月上班 $workCount 天 × ${moneyC(fare, a.currency)} = ${moneyC(fare * workCount, a.currency)}（带 • 的是你改过的日子）",
+                    fontSize = 12.sp,
+                )
+            }
+            TextButton(onClick = {
+                val first = on && !a.commuteOn
+                onSave(
+                    draft.copy(
+                        commuteUntil = if (first || a.commuteUntil.isBlank()) java.time.LocalDate.now().minusDays(1).toString() else a.commuteUntil,
+                    )
+                )
+                saved = "✅ 已保存，从今天开始自动扣"
+            }) { Text("保存通勤设置") }
+            if (saved.isNotEmpty()) Text(saved, fontSize = 12.sp)
+        }
+    }
 }

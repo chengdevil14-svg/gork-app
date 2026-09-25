@@ -57,17 +57,18 @@ fun ReportScreen(entries: List<Entry>, accounts: List<Account>, inc: Color, exp:
     var yearMode by rememberSaveable { mutableStateOf(false) }
     var ymStr by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
     val ym = YearMonth.parse(ymStr)
-    val real = entries.filter { !it.isTransfer }
+    val sv = { e: Entry -> statAmt(e, accounts) }
+    val real = entries.filter { sv(it) != 0.0 }
 
     fun inPeriod(d: LocalDate, y: YearMonth) = if (yearMode) d.year == y.year else YearMonth.from(d) == y
     val cur = real.filter { inPeriod(it.date, ym) }
     val prevYm = if (yearMode) ym.minusYears(1) else ym.minusMonths(1)
     val prev = real.filter { inPeriod(it.date, prevYm) }
 
-    val inSum = cur.filter { it.amount > 0 }.sumOf { it.base }
-    val outSum = -cur.filter { it.amount < 0 }.sumOf { it.base }
-    val prevOut = -prev.filter { it.amount < 0 }.sumOf { it.base }
-    val prevIn = prev.filter { it.amount > 0 }.sumOf { it.base }
+    val inSum = cur.filter { sv(it) > 0 }.sumOf { sv(it) }
+    val outSum = -cur.filter { sv(it) < 0 }.sumOf { sv(it) }
+    val prevOut = -prev.filter { sv(it) < 0 }.sumOf { sv(it) }
+    val prevIn = prev.filter { sv(it) > 0 }.sumOf { sv(it) }
     val periodName = if (yearMode) "${ym.year}年" else "${ym.year}年${ym.monthValue}月"
     val prevName = if (yearMode) "去年" else "上月"
 
@@ -137,13 +138,13 @@ fun ReportScreen(entries: List<Entry>, accounts: List<Account>, inc: Color, exp:
             Card(shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.padding(16.dp)) {
                     if (yearMode) {
-                        val outs = (1..12).map { m -> -cur.filter { it.date.monthValue == m && it.amount < 0 }.sumOf { it.base } }
-                        val ins = (1..12).map { m -> cur.filter { it.date.monthValue == m && it.amount > 0 }.sumOf { it.base } }
+                        val outs = (1..12).map { m -> -cur.filter { it.date.monthValue == m && sv(it) < 0 }.sumOf { sv(it) } }
+                        val ins = (1..12).map { m -> cur.filter { it.date.monthValue == m && sv(it) > 0 }.sumOf { sv(it) } }
                         BarChart(outs, ins, exp, inc)
                         AxisLabels(listOf("1月", "4月", "7月", "10月", "12月"))
                     } else {
                         val days = ym.lengthOfMonth()
-                        val outs = (1..days).map { d -> -cur.filter { it.date.dayOfMonth == d && it.amount < 0 }.sumOf { it.base } }
+                        val outs = (1..days).map { d -> -cur.filter { it.date.dayOfMonth == d && sv(it) < 0 }.sumOf { sv(it) } }
                         BarChart(outs, null, exp, inc)
                         AxisLabels(listOf("1", "8", "15", "22", "$days"))
                         val maxDay = outs.withIndex().maxByOrNull { it.value }
@@ -161,26 +162,26 @@ fun ReportScreen(entries: List<Entry>, accounts: List<Account>, inc: Color, exp:
             // Category breakdown
             BreakdownCard(
                 "支出分类",
-                cur.filter { it.amount < 0 }.groupBy { it.tag.ifBlank { "未分类" } }.mapValues { (_, v) -> -v.sumOf { it.base } },
+                cur.filter { sv(it) < 0 }.groupBy { it.tag.ifBlank { "未分类" } }.mapValues { (_, v) -> -v.sumOf { sv(it) } },
                 outSum,
                 exp,
             )
             BreakdownCard(
                 "收入分类",
-                cur.filter { it.amount > 0 }.groupBy { it.tag.ifBlank { "未分类" } }.mapValues { (_, v) -> v.sumOf { it.base } },
+                cur.filter { sv(it) > 0 }.groupBy { it.tag.ifBlank { "未分类" } }.mapValues { (_, v) -> v.sumOf { sv(it) } },
                 inSum,
                 inc,
             )
             // Account breakdown
             BreakdownCard(
                 "各账户支出",
-                cur.filter { it.amount < 0 }.groupBy { accName(accOf(it, accounts), accounts) }.mapValues { (_, v) -> -v.sumOf { it.base } },
+                cur.filter { sv(it) < 0 }.groupBy { accName(accOf(it, accounts), accounts) }.mapValues { (_, v) -> -v.sumOf { sv(it) } },
                 outSum,
                 exp,
             )
 
             // Top expenses
-            val top = cur.filter { it.amount < 0 }.sortedBy { it.base }.take(5)
+            val top = cur.filter { sv(it) < 0 }.sortedBy { sv(it) }.take(5)
             if (top.isNotEmpty()) {
                 Text("最大的 5 笔支出", fontWeight = FontWeight.Bold)
                 Card(shape = RoundedCornerShape(16.dp)) {

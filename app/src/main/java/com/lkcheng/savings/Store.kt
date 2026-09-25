@@ -32,6 +32,12 @@ data class Account(
     val opening: Double = 0.0, // 开始时的余额（信用卡：欠款填负数）
     val limit: Double = 0.0, // 信用卡额度
     val archived: Boolean = false,
+    // 交通卡通勤自动扣款
+    val commuteOn: Boolean = false,
+    val fare: Double = 0.0, // 每个上班日扣多少
+    val weekdays: String = "12345", // 1=周一 … 7=周日
+    val exceptions: String = "", // 逗号分隔的日期：和星期规则相反（放假 / 加班）
+    val commuteUntil: String = "", // 已扣到哪天
 )
 
 data class Goal(
@@ -202,6 +208,11 @@ class Store(context: Context) {
                         opening = o.optDouble("opening", 0.0),
                         limit = o.optDouble("limit", 0.0),
                         archived = o.optBoolean("archived", false),
+                        commuteOn = o.optBoolean("commuteOn", false),
+                        fare = o.optDouble("fare", 0.0),
+                        weekdays = o.optString("weekdays", "12345"),
+                        exceptions = o.optString("exceptions", ""),
+                        commuteUntil = o.optString("commuteUntil", ""),
                     )
                 )
             } catch (e: Exception) {
@@ -224,6 +235,11 @@ class Store(context: Context) {
                     .put("opening", a.opening)
                     .put("limit", a.limit)
                     .put("archived", a.archived)
+                    .put("commuteOn", a.commuteOn)
+                    .put("fare", a.fare)
+                    .put("weekdays", a.weekdays)
+                    .put("exceptions", a.exceptions)
+                    .put("commuteUntil", a.commuteUntil)
             )
         }
         sp.edit().putString("accounts", arr.toString()).apply()
