@@ -371,8 +371,12 @@ fun BreakdownCard(title: String, data: Map<String, Double>, total: Double, color
 
 
 /** Entries that are already counted as fixed costs (auto-recorded subscriptions / top-ups). */
-fun isFixedEntry(e: Entry, subs: List<Sub>) =
-    e.amount < 0 && (e.tag == "订阅" || e.tag == "交通卡充值" || subs.any { !it.isIncome && it.name == e.note })
+fun isFixedEntry(e: Entry, subs: List<Sub>): Boolean {
+    if (e.amount >= 0) return false
+    val s = subs.firstOrNull { !it.isIncome && it.name == e.note }
+    if (s != null) return s.inDaily // not in daily cost → counts as normal spending
+    return e.tag == "订阅" || e.tag == "交通卡充值"
+}
 
 @Composable
 fun CostStatsCard(

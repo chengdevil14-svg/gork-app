@@ -39,7 +39,7 @@ fun dailyLines(
     val costs = ArrayList<CostLine>()
     val incomes = ArrayList<CostLine>()
     val cycleTxt = { s: Sub -> CYCLE_NAMES.getOrElse(s.cycle) { "每月" } }
-    for (s in subs.filter { it.active }) {
+    for (s in subs.filter { it.active && it.inDaily }) {
         val m = monthlyCost(s)
         val line = CostLine(s.name, m / days, "${cycleTxt(s)} ${moneyC(s.amount, s.currency)} → 每月 ${money(m)} ÷ $days 天")
         if (s.isIncome) incomes.add(line) else costs.add(line)

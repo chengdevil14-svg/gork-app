@@ -71,6 +71,7 @@ data class Sub(
     val accountId: Long = 0L, // 从哪个账户扣
     val toAccountId: Long = 0L, // != 0：自动充值/转账到自己的账户
     val isIncome: Boolean = false, // 固定收入（如工资）
+    val inDaily: Boolean = true, // 是否计入每日成本 / 每日收入
 )
 
 class Store(context: Context) {
@@ -333,6 +334,7 @@ class Store(context: Context) {
                         accountId = o.optLong("accountId", 0L),
                         toAccountId = o.optLong("toAccountId", 0L),
                         isIncome = o.optBoolean("isIncome", false),
+                        inDaily = o.optBoolean("inDaily", true),
                     )
                 )
             } catch (e: Exception) {
@@ -361,6 +363,7 @@ class Store(context: Context) {
                     .put("accountId", x.accountId)
                     .put("toAccountId", x.toAccountId)
                     .put("isIncome", x.isIncome)
+                    .put("inDaily", x.inDaily)
             )
         }
         sp.edit().putString("subs", arr.toString()).apply()
