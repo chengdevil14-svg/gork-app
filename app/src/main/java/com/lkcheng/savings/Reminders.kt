@@ -277,8 +277,8 @@ object Reminders {
             if (s.isRecord && s.key != "night" && st.getB(K.SKIP_IF_RECORDED, true) && todayEntries.isNotEmpty()) return
             var text = s.messages.random()
             if (s.key == "night") {
-                val inSum = todayEntries.filter { it.amount > 0 }.sumOf { it.base }
-                val outSum = -todayEntries.filter { it.amount < 0 }.sumOf { it.base }
+                val inSum = todayEntries.filter { it.amount > 0 && !it.isTransfer }.sumOf { it.base }
+                val outSum = -todayEntries.filter { it.amount < 0 && !it.isTransfer }.sumOf { it.base }
                 text = if (todayEntries.isEmpty()) {
                     "晚安 🌙 今天还没有记账，花一分钟记一下吧"
                 } else {

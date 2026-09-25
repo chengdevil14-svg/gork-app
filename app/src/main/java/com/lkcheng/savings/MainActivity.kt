@@ -118,6 +118,12 @@ class MainActivity : ComponentActivity() {
         val store = Store(applicationContext)
         Cur.load(store)
         val openAdd = intent?.getBooleanExtra("open_add", false) == true
+        val sharedUri: android.net.Uri? = if (intent?.action == Intent.ACTION_SEND && intent.type?.startsWith("image/") == true) {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(Intent.EXTRA_STREAM) as? android.net.Uri
+        } else {
+            null
+        }
         try {
             Reminders.scheduleAll(applicationContext)
         } catch (e: Exception) {
@@ -134,7 +140,7 @@ class MainActivity : ComponentActivity() {
                 )
             }
             MaterialTheme(colorScheme = schemeFor(theme)) {
-                SavingsApp(store, theme, openAdd) { t ->
+                SavingsApp(store, theme, openAdd, sharedUri) { t ->
                     theme = t
                     store.theme = t
                 }
@@ -222,7 +228,7 @@ fun openUrl(context: Context, url: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) -> Unit) {
+fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.net.Uri?, onThemeChange: (Int) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val entries = remember { mutableStateListOf<Entry>().apply { addAll(store.loadEntries()) } }
@@ -232,6 +238,14 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
     var editingSub by remember { mutableStateOf<Sub?>(null) }
     var newSub by remember { mutableStateOf(false) }
     var newGoal by remember { mutableStateOf(false) }
+    val accounts = remember { mutableStateListOf<Account>().apply { addAll(store.loadAccounts()) } }
+    val deposits = remember { mutableStateListOf<Deposit>().apply { addAll(store.loadDeposits()) } }
+    var editingDep by remember { mutableStateOf<Deposit?>(null) }
+    var newDep by remember { mutableStateOf(false) }
+    var showAccounts by remember { mutableStateOf(false) }
+    var showReport by remember { mutableStateOf(false) }
+    var prefill by remember { mutableStateOf<ScanResult?>(null) }
+    var scanBusy by remember { mutableStateOf(false) }
     var greenIncome by remember { mutableStateOf(store.greenForIncome) }
     var syncUrl by remember { mutableStateOf(store.syncUrl) }
     var sheetUrl by remember { mutableStateOf(store.sheetUrl) }
@@ -253,6 +267,31 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
     fun persist() = store.saveEntries(entries.toList())
     fun persistGoals() = store.saveGoals(goals.toList())
     fun persistSubs() = store.saveSubs(subs.toList())
+    fun persistAccounts() = store.saveAccounts(accounts.toList())
+    fun persistDeposits() = store.saveDeposits(deposits.toList())
+
+    fun runDeposits() {
+        val (nd, ne) = processDeposits(deposits.toList(), accounts.toList())
+        if (nd != deposits.toList()) {
+            deposits.clear()
+            deposits.addAll(nd)
+            persistDeposits()
+        }
+        if (ne.isNotEmpty()) {
+            entries.addAll(ne)
+            persist()
+        }
+    }
+
+    fun startScan(uri: android.net.Uri) {
+        val name = Photos.import(context, uri) ?: ""
+        scanBusy = true
+        Scan.recognize(context, uri, name) { r ->
+            scanBusy = false
+            prefill = r ?: ScanResult(null, null, false, "", "", null, "", name, "")
+            showAdd = true
+        }
+    }
 
     /** Roll subscription dates forward and auto-record charges that are due. */
     fun runSubs() {
@@ -282,14 +321,17 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
                 }
                 for (e in entries.filter { !it.synced }.toList()) {
                     val gName = goals.firstOrNull { it.id == e.goalId }?.name ?: ""
-                    withContext(Dispatchers.IO) { Sync.upsert(context, url, e, gName) }
+                    val aName = accounts.firstOrNull { it.id == accOf(e, accounts) }?.name ?: ""
+                    val tName = if (e.isTransfer) accounts.firstOrNull { it.id == e.toAccountId }?.name ?: "" else ""
+                    withContext(Dispatchers.IO) { Sync.upsert(context, url, e, gName, aName, tName) }
                     val i = entries.indexOfFirst { it.id == e.id }
                     if (i >= 0 && entries[i] == e) {
                         entries[i] = e.copy(synced = true, photoSent = e.photo.isNotEmpty())
                         persist()
                     }
                 }
-                val snapshot = goals.toList().map { g -> g to calcGoal(g, entries.toList(), entries.sumOf { it.base }) }
+                val nwSnap = netWorth(entries.toList(), accounts.toList())
+                val snapshot = goals.toList().map { g -> g to calcGoal(g, entries.toList(), nwSnap) }
                 val subsSnap = subs.toList()
                 withContext(Dispatchers.IO) {
                     Sync.goals(url, snapshot, prefs.emailOn.value, subsSnap, prefs.subEmail.value)
@@ -306,6 +348,8 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
 
     LaunchedEffect(Unit) {
         runSubs()
+        runDeposits()
+        if (sharedUri != null) startScan(sharedUri)
         syncNow()
     }
 
@@ -315,8 +359,8 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
         selStr = (if (YearMonth.from(now) == m) now else m.atDay(1)).toString()
     }
 
-    val total = entries.sumOf { it.base }
-    val monthEntries = entries.filter { YearMonth.from(it.date) == month }
+    val total = netWorth(entries, accounts)
+    val monthEntries = entries.filter { YearMonth.from(it.date) == month && !it.isTransfer }
     val monthIn = monthEntries.filter { it.amount > 0 }.sumOf { it.base }
     val monthOut = -monthEntries.filter { it.amount < 0 }.sumOf { it.base }
     val daily = monthEntries.groupBy { it.date }.mapValues { (_, v) -> v.sumOf { it.base } }
@@ -324,7 +368,42 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
     val dayNet = dayEntries.sumOf { it.base }
     val unsynced = entries.count { !it.synced } + store.pendingDeletes().size
 
-    if (showSettings) {
+    val scanPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) startScan(uri)
+    }
+
+    if (showAccounts) {
+        AccountsScreen(
+            accounts = accounts.toList(),
+            entries = entries.toList(),
+            inc = inc,
+            exp = exp,
+            onSave = { a ->
+                val i = accounts.indexOfFirst { it.id == a.id }
+                if (i >= 0) accounts[i] = a else accounts.add(a)
+                persistAccounts()
+            },
+            onDelete = { a ->
+                accounts.removeAll { it.id == a.id }
+                for (i in entries.indices) {
+                    val e = entries[i]
+                    if (e.accountId == a.id || e.toAccountId == a.id) {
+                        entries[i] = e.copy(
+                            accountId = if (e.accountId == a.id) 0L else e.accountId,
+                            toAccountId = if (e.toAccountId == a.id) 0L else e.toAccountId,
+                            synced = false,
+                        )
+                    }
+                }
+                persistAccounts()
+                persist()
+            },
+            onOpenEntry = { e -> editing = e },
+            onClose = { showAccounts = false },
+        )
+    } else if (showReport) {
+        ReportScreen(entries.toList(), accounts.toList(), inc, exp) { showReport = false }
+    } else if (showSettings) {
         SettingsScreen(
             theme = theme,
             onTheme = onThemeChange,
@@ -385,6 +464,8 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
                             }
                         }
                     }
+                    IconButton(onClick = { showReport = true }) { Text("📊", fontSize = 20.sp) }
+                    IconButton(onClick = { showAccounts = true }) { Text("💳", fontSize = 20.sp) }
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Filled.Settings, contentDescription = "设置")
                     }
@@ -392,13 +473,29 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { showAdd = true },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = Color.White,
-                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                text = { Text("记一笔") },
-            )
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        if (!scanBusy) scanPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    icon = {
+                        if (scanBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("🧾")
+                    },
+                    text = { Text(if (scanBusy) "识别中…" else "识别截图") },
+                )
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        prefill = null
+                        showAdd = true
+                    },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = Color.White,
+                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    text = { Text("记一笔") },
+                )
+            }
         },
     ) { padding ->
         LazyColumn(
@@ -419,6 +516,9 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
             }
             item {
                 SummaryCard(total, 0.0, month, monthIn, monthOut, inc, exp)
+            }
+            item {
+                AccountsStrip(accounts.toList(), entries.toList(), inc, exp) { showAccounts = true }
             }
             item {
                 MonthHeader(
@@ -467,6 +567,13 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
                     e, inc, exp,
                     showSync = syncUrl.isNotBlank(),
                     goalName = goals.firstOrNull { it.id == e.goalId }?.name ?: "",
+                    accountText = if (e.isTransfer) {
+                        accName(accOf(e, accounts), accounts) + " → " + accName(e.toAccountId, accounts)
+                    } else if (accounts.size > 1) {
+                        accName(accOf(e, accounts), accounts)
+                    } else {
+                        ""
+                    },
                 ) { editing = e }
             }
             item {
@@ -514,7 +621,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "订阅支出",
+                        "订阅 / 自动扣款",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f),
@@ -529,6 +636,26 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
             items(sortedSubs, key = { "s" + it.id }) { s ->
                 SubRow(s, exp) { editingSub = s }
             }
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "💰 利息 / 定期",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { newDep = true }) { Text("＋ 新增") }
+                }
+            }
+            item { DepositsSummary(deposits.toList(), inc) { newDep = true } }
+            items(deposits.toList(), key = { "d" + it.id }) { d ->
+                DepositRow(d, allEntries, inc) { editingDep = d }
+            }
         }
     }
     }
@@ -539,6 +666,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
             exp = exp,
             remindH = prefs.subH.value,
             remindM = prefs.subM.value,
+            accounts = accounts.toList(),
             onDismiss = {
                 newSub = false
                 editingSub = null
@@ -559,6 +687,40 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
                 newSub = false
                 editingSub = null
                 Reminders.scheduleAll(context)
+                syncNow()
+            },
+        )
+    }
+
+    if (newDep || editingDep != null) {
+        DepositDialog(
+            initial = editingDep,
+            accounts = accounts.toList(),
+            onDismiss = {
+                newDep = false
+                editingDep = null
+            },
+            entries = entries.toList(),
+            onSave = { d ->
+                val i = deposits.indexOfFirst { it.id == d.id }
+                if (i >= 0) deposits[i] = d else deposits.add(d)
+                persistDeposits()
+                runDeposits()
+                newDep = false
+                editingDep = null
+                Reminders.scheduleAll(context)
+                syncNow()
+            },
+            onDelete = { d ->
+                deposits.removeAll { it.id == d.id }
+                persistDeposits()
+                newDep = false
+                editingDep = null
+                Reminders.scheduleAll(context)
+            },
+            onRecord = { e ->
+                entries.add(e)
+                persist()
                 syncNow()
             },
         )
@@ -586,11 +748,17 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
             inTags = tagCandidates(entries, true),
             outTags = tagCandidates(entries, false),
             goals = goals.toList(),
-            onDismiss = { showAdd = false },
+            accounts = accounts.toList(),
+            prefill = prefill,
+            onDismiss = {
+                showAdd = false
+                prefill = null
+            },
             onSave = { e ->
                 entries.add(e)
                 persist()
                 showAdd = false
+                prefill = null
                 syncNow()
             },
             onDelete = {},
@@ -607,6 +775,8 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
             inTags = tagCandidates(entries, true),
             outTags = tagCandidates(entries, false),
             goals = goals.toList(),
+            accounts = accounts.toList(),
+            prefill = null,
             onDismiss = { editing = null },
             onSave = { e ->
                 val i = entries.indexOfFirst { it.id == e.id }
@@ -868,9 +1038,9 @@ fun PhotoThumb(name: String, sizeDp: Int, sample: Int, modifier: Modifier = Modi
 }
 
 @Composable
-fun EntryRow(e: Entry, inc: Color, exp: Color, showSync: Boolean, goalName: String, onClick: () -> Unit) {
+fun EntryRow(e: Entry, inc: Color, exp: Color, showSync: Boolean, goalName: String, accountText: String, onClick: () -> Unit) {
     val isIn = e.amount >= 0
-    val color = if (isIn) inc else exp
+    val color = if (e.isTransfer) MaterialTheme.colorScheme.primary else if (isIn) inc else exp
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -891,19 +1061,20 @@ fun EntryRow(e: Entry, inc: Color, exp: Color, showSync: Boolean, goalName: Stri
                         .background(color.copy(alpha = 0.15f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(if (isIn) "＋" else "－", color = color, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text(if (e.isTransfer) "⇄" else if (isIn) "＋" else "－", color = color, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 }
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    e.note.ifBlank { e.tag.ifBlank { if (isIn) "存入" else "取出" } },
+                    e.note.ifBlank { if (e.isTransfer) "转账" else e.tag.ifBlank { if (isIn) "存入" else "取出" } },
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                val parts = mutableListOf(if (isIn) "存入" else "取出")
-                if (e.tag.isNotBlank() && e.note.isNotBlank()) parts.add(e.tag)
+                val parts = mutableListOf(if (e.isTransfer) "转账" else if (isIn) "存入" else "取出")
+                if (e.tag.isNotBlank() && e.note.isNotBlank() && !e.isTransfer) parts.add(e.tag)
+                if (accountText.isNotBlank()) parts.add(accountText)
                 if (goalName.isNotBlank()) parts.add("🎯 $goalName")
                 if (e.photo.isNotEmpty()) parts.add("📷")
                 if (showSync) parts.add(if (e.synced) "☁ 已同步" else "☁ 待同步")
@@ -914,7 +1085,12 @@ fun EntryRow(e: Entry, inc: Color, exp: Color, showSync: Boolean, goalName: Stri
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(signedMoneyC(e.amount, e.currency), color = color, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text(
+                    if (e.isTransfer) moneyC(kotlin.math.abs(e.amount), e.currency) else signedMoneyC(e.amount, e.currency),
+                    color = color,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp,
+                )
                 if (e.currency != Cur.code) {
                     Text(
                         "≈ " + signedMoney(e.base),
@@ -983,23 +1159,66 @@ fun EntryDialog(
     inTags: List<String>,
     outTags: List<String>,
     goals: List<Goal>,
+    accounts: List<Account>,
+    prefill: ScanResult?,
     onDismiss: () -> Unit,
     onSave: (Entry) -> Unit,
     onDelete: (Entry) -> Unit,
 ) {
     val context = LocalContext.current
-    var tag by remember { mutableStateOf(initial?.tag ?: "") }
-    var cur by remember { mutableStateOf(initial?.currency ?: Cur.code) }
+    val liveAccounts = accounts.filter { !it.archived || it.id == initial?.accountId || it.id == initial?.toAccountId }
+    fun hintAccount(hint: String): Long? = if (hint.isBlank()) null else accounts.firstOrNull { a ->
+        !a.archived && (a.name.contains(hint, true) || hint.contains(a.name, true) ||
+            (hint.startsWith("Touch") && (a.name.contains("TNG", true) || a.name.contains("Touch", true))))
+    }?.id
+    var tag by remember { mutableStateOf(initial?.tag ?: prefill?.tag ?: "") }
+    var cur by remember { mutableStateOf(initial?.currency ?: prefill?.currency ?: Cur.code) }
     var goalId by remember { mutableLongStateOf(initial?.goalId ?: 0L) }
-    var isIn by remember { mutableStateOf(initial?.let { it.amount >= 0 } ?: true) }
-    var amountText by remember { mutableStateOf(initial?.let { plainNumber(kotlin.math.abs(it.amount)) } ?: "") }
-    var note by remember { mutableStateOf(initial?.note ?: "") }
-    var photo by remember { mutableStateOf(initial?.photo ?: "") }
+    var isIn by remember { mutableStateOf(initial?.let { it.amount >= 0 } ?: prefill?.isIn ?: true) }
+    var transfer by remember { mutableStateOf(initial?.isTransfer ?: false) }
+    var accId by remember {
+        mutableLongStateOf(
+            initial?.let { accOf(it, accounts) } ?: prefill?.let { hintAccount(it.accountHint) } ?: accounts.firstOrNull { !it.archived }?.id ?: 0L
+        )
+    }
+    var toAccId by remember { mutableLongStateOf(initial?.toAccountId ?: 0L) }
+    var date by remember { mutableStateOf(initial?.date ?: prefill?.date ?: defaultDate) }
+    var amountText by remember {
+        mutableStateOf(initial?.let { plainNumber(kotlin.math.abs(it.amount)) } ?: prefill?.amount?.let { plainNumber(it) } ?: "")
+    }
+    var note by remember { mutableStateOf(initial?.note ?: prefill?.note ?: "") }
+    var photo by remember { mutableStateOf(initial?.photo ?: prefill?.photo ?: "") }
+    var scanning by remember { mutableStateOf(false) }
+    var scanMsg by remember { mutableStateOf(if (prefill != null) "🧾 已从截图识别，请核对后保存" else "") }
+    val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            val name = Photos.import(context, uri)
+            if (name != null) photo = name
+            scanning = true
+            scanMsg = "识别中…"
+            Scan.recognize(context, uri, name ?: "") { r ->
+                scanning = false
+                if (r == null || r.amount == null) {
+                    scanMsg = "没认出金额，请手动填写"
+                } else {
+                    amountText = plainNumber(r.amount)
+                    r.currency?.let { cur = it }
+                    isIn = r.isIn
+                    transfer = false
+                    tag = r.tag
+                    if (r.note.isNotBlank()) note = r.note
+                    r.date?.let { date = it }
+                    hintAccount(r.accountHint)?.let { accId = it }
+                    scanMsg = "🧾 已识别，请核对后保存"
+                }
+            }
+        }
+    }
     var confirmDelete by remember { mutableStateOf(false) }
     var viewPhoto by remember { mutableStateOf(false) }
     var photoError by remember { mutableStateOf(false) }
     val amount = amountText.toDoubleOrNull()
-    val valid = amount != null && amount > 0
+    val valid = amount != null && amount > 0 && (!transfer || (toAccId != 0L && toAccId != accId))
 
     val camFile = remember { File(context.cacheDir, "camera.jpg") }
     val camUri = remember { FileProvider.getUriForFile(context, context.packageName + ".files", camFile) }
@@ -1024,13 +1243,47 @@ fun EntryDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(
-                    "${defaultDate.year}年${defaultDate.monthValue}月${defaultDate.dayOfMonth}日 ${weekdayCn(defaultDate)}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TypeButton("＋ 存入", isIn, inc, Modifier.weight(1f)) { isIn = true }
-                    TypeButton("－ 取出", !isIn, exp, Modifier.weight(1f)) { isIn = false }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(
+                        onClick = {
+                            android.app.DatePickerDialog(context, { _, y, mo, d ->
+                                date = LocalDate.of(y, mo + 1, d)
+                            }, date.year, date.monthValue - 1, date.dayOfMonth).show()
+                        },
+                        contentPadding = PaddingValues(horizontal = 0.dp),
+                    ) { Text("📅 ${date.year}年${date.monthValue}月${date.dayOfMonth}日 ${weekdayCn(date)}") }
+                    Spacer(Modifier.weight(1f))
+                    if (initial == null) {
+                        TextButton(
+                            enabled = !scanning,
+                            onClick = {
+                                scanLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                            },
+                        ) { Text("🧾 识别截图") }
+                    }
+                }
+                if (scanMsg.isNotEmpty()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (scanning) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(scanMsg, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TypeButton("＋ 存入", isIn && !transfer, inc, Modifier.weight(1f)) {
+                        isIn = true
+                        transfer = false
+                    }
+                    TypeButton("－ 取出", !isIn && !transfer, exp, Modifier.weight(1f)) {
+                        isIn = false
+                        transfer = false
+                    }
+                    TypeButton("⇄ 转账", transfer, MaterialTheme.colorScheme.primary, Modifier.weight(1f)) {
+                        isIn = false
+                        transfer = true
+                    }
                 }
                 OutlinedTextField(
                     value = amountText,
@@ -1067,7 +1320,31 @@ fun EntryDialog(
                         ) { Text("+$q", fontSize = 12.sp) }
                     }
                 }
-                TagPicker(tag, if (isIn) inTags else outTags) { tag = it }
+                Text(
+                    if (transfer) "从哪个账户转出" else if (isIn) "存进哪个账户" else "用哪个账户付",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (a in liveAccounts) {
+                        FilterChip(selected = accId == a.id, onClick = { accId = a.id }, label = { Text(accIcon(a) + " " + a.name, fontSize = 13.sp) })
+                    }
+                }
+                if (transfer) {
+                    Text("转到哪个账户", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (a in liveAccounts.filter { it.id != accId }) {
+                            FilterChip(selected = toAccId == a.id, onClick = { toAccId = a.id }, label = { Text(accIcon(a) + " " + a.name, fontSize = 13.sp) })
+                        }
+                    }
+                    if (liveAccounts.size < 2) {
+                        Text("要先在「账户」里加第二个账户才能转账", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                    }
+                    Text("转账不算收入也不算支出，只是钱从一个账户移到另一个。", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (!transfer) {
+                    TagPicker(tag, if (isIn) inTags else outTags) { tag = it }
+                }
                 val goalChoices = goals.filter { g ->
                     g.id == goalId || (!(g.useTotal && !g.debt) && g.debt != isIn)
                 }
@@ -1168,15 +1445,17 @@ fun EntryDialog(
                         onSave(
                             Entry(
                                 id = initial?.id ?: System.currentTimeMillis(),
-                                date = defaultDate,
-                                amount = if (isIn) a else -a,
+                                date = date,
+                                amount = if (isIn && !transfer) a else -a,
                                 note = note.trim(),
                                 photo = photo,
                                 synced = false,
                                 photoSent = samePhoto && initial?.photoSent == true,
-                                tag = tag.trim(),
+                                tag = if (transfer) "转账" else tag.trim(),
                                 goalId = goalId,
                                 currency = cur,
+                                accountId = accId,
+                                toAccountId = if (transfer) toAccId else 0L,
                             )
                         )
                     }

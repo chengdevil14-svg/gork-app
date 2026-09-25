@@ -935,8 +935,8 @@ fun WelcomeDialog(entries: List<Entry>, goals: List<Goal>, subs: List<Sub>, onAd
                 if (todayEntries.isEmpty()) {
                     Text("今天还没有记账 ✏️")
                 } else {
-                    val inSum = todayEntries.filter { it.amount > 0 }.sumOf { it.base }
-                    val outSum = -todayEntries.filter { it.amount < 0 }.sumOf { it.base }
+                    val inSum = todayEntries.filter { it.amount > 0 && !it.isTransfer }.sumOf { it.base }
+                    val outSum = -todayEntries.filter { it.amount < 0 && !it.isTransfer }.sumOf { it.base }
                     Text("今天记了 ${todayEntries.size} 笔：存入 ${money(inSum)} · 取出 ${money(outSum)}")
                 }
                 Text("总存款 ${(if (total < 0) "-" else "") + money(total)}", fontWeight = FontWeight.Bold)

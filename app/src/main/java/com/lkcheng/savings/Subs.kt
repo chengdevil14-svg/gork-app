@@ -29,6 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -107,7 +108,13 @@ fun processSubs(subs: List<Sub>, today: LocalDate = LocalDate.now()): Pair<List<
         var guard = 0
         while (!d.isAfter(today) && guard < 1000) {
             if (s.autoRecord && (recorded == null || d.isAfter(recorded))) {
-                newEntries.add(Entry(id = idSeed++, date = d, amount = -s.amount, note = s.name, tag = "订阅", currency = s.currency))
+                newEntries.add(
+                    Entry(
+                        id = idSeed++, date = d, amount = -s.amount, note = s.name,
+                        tag = if (s.toAccountId != 0L) "转账" else "订阅", currency = s.currency,
+                        accountId = s.accountId, toAccountId = s.toAccountId,
+                    )
+                )
                 recorded = d
             }
             if (d.isBefore(today)) d = advance(d, s.cycle) else break
@@ -120,7 +127,7 @@ fun processSubs(subs: List<Sub>, today: LocalDate = LocalDate.now()): Pair<List<
 
 @Composable
 fun SubsSummary(subs: List<Sub>, exp: Color, onAdd: () -> Unit) {
-    val active = subs.filter { it.active }
+    val active = subs.filter { it.active && it.toAccountId == 0L }
     val perMonth = active.sumOf { monthlyCost(it) }
     val wantCancel = active.filter { it.wantCancel }
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
@@ -216,11 +223,16 @@ fun SubDialog(
     exp: Color,
     remindH: Int,
     remindM: Int,
+    accounts: List<Account>,
     onDismiss: () -> Unit,
     onSave: (Sub) -> Unit,
     onDelete: (Sub) -> Unit,
 ) {
     val ctx = LocalContext.current
+    val live = accounts.filter { !it.archived }
+    var accId by remember { mutableLongStateOf(initial?.accountId?.takeIf { id -> accounts.any { it.id == id } } ?: live.firstOrNull()?.id ?: 0L) }
+    var topUp by remember { mutableStateOf((initial?.toAccountId ?: 0L) != 0L) }
+    var toAccId by remember { mutableLongStateOf(initial?.toAccountId ?: 0L) }
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var amountText by remember { mutableStateOf(initial?.let { plainNumber(it.amount) } ?: "") }
     var cycle by remember { mutableIntStateOf(initial?.cycle ?: 0) }
@@ -237,7 +249,7 @@ fun SubDialog(
 
     val amount = amountText.toDoubleOrNull() ?: 0.0
     val date = parseDate(dateText)
-    val valid = name.isNotBlank() && amount > 0 && date != null
+    val valid = name.isNotBlank() && amount > 0 && date != null && (!topUp || (toAccId != 0L && toAccId != accId))
 
     fun build(): Sub? {
         val d = parseDate(dateText) ?: return null
@@ -254,6 +266,8 @@ fun SubDialog(
             active = active,
             // don't back-fill charges before the date the user entered
             currency = cur,
+            accountId = accId,
+            toAccountId = if (topUp) toAccId else 0L,
             recordedUntil = if (changedDate) d.minusDays(1).toString() else initial?.recordedUntil ?: "",
         )
     }
@@ -315,7 +329,29 @@ fun SubDialog(
                         }, d.year, d.monthValue - 1, d.dayOfMonth).show()
                     }) { Text("📅") }
                 }
-                Text("续费前提醒", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("从哪个账户扣", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (a in live) {
+                        FilterChip(selected = accId == a.id, onClick = { accId = a.id }, label = { Text(accIcon(a) + " " + a.name, fontSize = 12.sp) })
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("这是充值 / 转到自己的账户")
+                        Text("例如银行卡自动充值 EZ-Link，不算支出", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = topUp, onCheckedChange = { topUp = it })
+                }
+                if (topUp) {
+                    Text("充值到", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (a in live.filter { it.id != accId }) {
+                            FilterChip(selected = toAccId == a.id, onClick = { toAccId = a.id }, label = { Text(accIcon(a) + " " + a.name, fontSize = 12.sp) })
+                        }
+                    }
+                    if (live.size < 2) Text("先到「💳 账户」新增交通卡账户", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                }
+                Text(if (topUp) "扣款前提醒" else "续费前提醒", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for ((label, n) in listOf("当天" to 0, "提前1天" to 1, "提前3天" to 3, "提前7天" to 7)) {
                         FilterChip(selected = before == n, onClick = { before = n }, label = { Text(label, fontSize = 13.sp) })
@@ -331,8 +367,8 @@ fun SubDialog(
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("扣款日自动记一笔支出")
-                        Text("分类「订阅」，不用自己手动记", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (topUp) "到日子自动记一笔充值" else "扣款日自动记一笔支出")
+                        Text(if (topUp) "自动从扣款账户转到充值账户" else "分类「订阅」，不用自己手动记", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(checked = autoRecord, onCheckedChange = { autoRecord = it })
                 }

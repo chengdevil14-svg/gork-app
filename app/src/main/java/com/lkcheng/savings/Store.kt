@@ -20,6 +20,18 @@ data class Entry(
     val tag: String = "",
     val goalId: Long = 0L,
     val currency: String = "SGD",
+    val accountId: Long = 0L, // 0 = 默认（第一个账户）
+    val toAccountId: Long = 0L, // != 0 表示转账：从 accountId 转到 toAccountId（amount 为负数）
+)
+
+data class Account(
+    val id: Long,
+    val name: String,
+    val type: Int = 0, // 0 现金, 1 银行卡, 2 信用卡, 3 电子钱包, 4 其他
+    val currency: String = "SGD",
+    val opening: Double = 0.0, // 开始时的余额（信用卡：欠款填负数）
+    val limit: Double = 0.0, // 信用卡额度
+    val archived: Boolean = false,
 )
 
 data class Goal(
@@ -47,6 +59,8 @@ data class Sub(
     val active: Boolean = true,
     val recordedUntil: String = "",
     val currency: String = "SGD",
+    val accountId: Long = 0L, // 从哪个账户扣
+    val toAccountId: Long = 0L, // != 0：自动充值/转账到自己的账户
 )
 
 class Store(context: Context) {
@@ -74,6 +88,8 @@ class Store(context: Context) {
                         tag = o.optString("tag", ""),
                         goalId = o.optLong("goalId", 0L),
                         currency = o.optString("currency", "SGD").ifBlank { "SGD" },
+                        accountId = o.optLong("accountId", 0L),
+                        toAccountId = o.optLong("toAccountId", 0L),
                     )
                 )
             } catch (e: Exception) {
@@ -98,6 +114,8 @@ class Store(context: Context) {
                     .put("tag", e.tag)
                     .put("goalId", e.goalId)
                     .put("currency", e.currency)
+                    .put("accountId", e.accountId)
+                    .put("toAccountId", e.toAccountId)
             )
         }
         sp.edit().putString("entries", arr.toString()).apply()
@@ -160,6 +178,109 @@ class Store(context: Context) {
         sp.edit().putString("goals", arr.toString()).apply()
     }
 
+    fun loadAccounts(): List<Account> {
+        if (!sp.contains("accounts")) {
+            val list = listOf(Account(1L, "现金", 0, currency))
+            saveAccounts(list)
+            return list
+        }
+        val arr = try {
+            JSONArray(sp.getString("accounts", "[]") ?: "[]")
+        } catch (e: Exception) {
+            JSONArray()
+        }
+        val out = ArrayList<Account>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            try {
+                out.add(
+                    Account(
+                        id = o.getLong("id"),
+                        name = o.optString("name", "账户"),
+                        type = o.optInt("type", 0),
+                        currency = o.optString("currency", "SGD"),
+                        opening = o.optDouble("opening", 0.0),
+                        limit = o.optDouble("limit", 0.0),
+                        archived = o.optBoolean("archived", false),
+                    )
+                )
+            } catch (e: Exception) {
+                // skip
+            }
+        }
+        if (out.isEmpty()) out.add(Account(1L, "现金", 0, currency))
+        return out
+    }
+
+    fun saveAccounts(list: List<Account>) {
+        val arr = JSONArray()
+        for (a in list) {
+            arr.put(
+                JSONObject()
+                    .put("id", a.id)
+                    .put("name", a.name)
+                    .put("type", a.type)
+                    .put("currency", a.currency)
+                    .put("opening", a.opening)
+                    .put("limit", a.limit)
+                    .put("archived", a.archived)
+            )
+        }
+        sp.edit().putString("accounts", arr.toString()).apply()
+    }
+
+    fun loadDeposits(): List<Deposit> {
+        val arr = try {
+            JSONArray(sp.getString("deposits", "[]") ?: "[]")
+        } catch (e: Exception) {
+            JSONArray()
+        }
+        val out = ArrayList<Deposit>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            try {
+                out.add(
+                    Deposit(
+                        id = o.getLong("id"),
+                        name = o.optString("name", "定期"),
+                        principal = o.optDouble("principal", 0.0),
+                        currency = o.optString("currency", "SGD"),
+                        rate = o.optDouble("rate", 0.0),
+                        start = o.optString("start", ""),
+                        termMonths = o.optInt("termMonths", 0),
+                        endDate = o.optString("endDate", ""),
+                        accountId = o.optLong("accountId", 0L),
+                        autoSettle = o.optBoolean("autoSettle", true),
+                        autoRenew = o.optBoolean("autoRenew", false),
+                        settled = o.optString("settled", ""),
+                        active = o.optBoolean("active", true),
+                        daily = o.optDouble("daily", 0.0),
+                        dailyMode = o.optInt("dailyMode", 0),
+                        dailyUntil = o.optString("dailyUntil", ""),
+                    )
+                )
+            } catch (e: Exception) {
+                // skip
+            }
+        }
+        return out
+    }
+
+    fun saveDeposits(list: List<Deposit>) {
+        val arr = JSONArray()
+        for (d in list) {
+            arr.put(
+                JSONObject()
+                    .put("id", d.id).put("name", d.name).put("principal", d.principal).put("currency", d.currency)
+                    .put("rate", d.rate).put("start", d.start).put("termMonths", d.termMonths).put("endDate", d.endDate)
+                    .put("accountId", d.accountId).put("autoSettle", d.autoSettle).put("autoRenew", d.autoRenew)
+                    .put("settled", d.settled).put("active", d.active).put("daily", d.daily)
+                    .put("dailyMode", d.dailyMode).put("dailyUntil", d.dailyUntil)
+            )
+        }
+        sp.edit().putString("deposits", arr.toString()).apply()
+    }
+
     fun loadSubs(): List<Sub> {
         val arr = try {
             JSONArray(sp.getString("subs", "[]") ?: "[]")
@@ -183,6 +304,8 @@ class Store(context: Context) {
                         active = o.optBoolean("active", true),
                         recordedUntil = o.optString("recordedUntil", ""),
                         currency = o.optString("currency", "SGD").ifBlank { "SGD" },
+                        accountId = o.optLong("accountId", 0L),
+                        toAccountId = o.optLong("toAccountId", 0L),
                     )
                 )
             } catch (e: Exception) {
@@ -208,6 +331,8 @@ class Store(context: Context) {
                     .put("active", x.active)
                     .put("recordedUntil", x.recordedUntil)
                     .put("currency", x.currency)
+                    .put("accountId", x.accountId)
+                    .put("toAccountId", x.toAccountId)
             )
         }
         sp.edit().putString("subs", arr.toString()).apply()
@@ -309,6 +434,9 @@ object Fx {
     private val updated = mutableStateOf("")
     val updatedAt: String get() = updated.value
     fun sgdPer(code: String): Double = rates.value[code] ?: 1.0
+    fun convert(amount: Double, from: String, to: String): Double =
+        if (from == to) amount else amount * sgdPer(from) / sgdPer(to)
+
     fun toBase(amount: Double, from: String): Double {
         val base = Cur.code
         if (from == base) return amount
@@ -341,6 +469,8 @@ object Fx {
 
 /** Amount converted into the settlement currency. */
 val Entry.base: Double get() = Fx.toBase(amount, currency)
+
+val Entry.isTransfer: Boolean get() = toAccountId != 0L
 
 fun moneyC(v: Double, code: String): String = symbolOf(code) + " " + String.format(Locale.US, "%,.2f", abs(v))
 

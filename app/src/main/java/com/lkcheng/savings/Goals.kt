@@ -77,7 +77,7 @@ fun calcGoal(g: Goal, entries: List<Entry>, total: Double, now: YearMonth = Year
     val remaining = max(0.0, g.target - done)
     val pct = if (g.target > 0) (done / g.target).coerceIn(0.0, 1.0) else 0.0
     val thisMonth = if (byTotal) {
-        entries.filter { YearMonth.from(it.date) == now }.sumOf { it.base }
+        entries.filter { YearMonth.from(it.date) == now && !it.isTransfer }.sumOf { it.base }
     } else {
         linked.filter { YearMonth.from(it.date) == now }.sumOf { contribution(g, it) }
     }

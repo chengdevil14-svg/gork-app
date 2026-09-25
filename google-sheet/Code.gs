@@ -1,14 +1,14 @@
 /**
  * 存钱记录 → Google Sheet 同步脚本
- * 「记录」表：日期 | 进出 | 金额 | 货币 | 结算金额 | 分类 | 照片 | 备注 | 目标 | 编号
+ * 「记录」表：日期 | 进出 | 金额 | 货币 | 结算金额 | 分类 | 账户 | 照片 | 备注 | 目标 | 编号
  * 「订阅」表：所有订阅支出
  * 「目标」表：每个存款目标 / 欠款的进度
  * 照片直接嵌入格子里（不经过 Google Drive）。
  */
 
 const SHEET_NAME = '记录';
-const HEADERS = ['日期', '进出', '金额', '货币', '结算金额', '分类', '照片', '备注', '目标', '编号'];
-const COL = { date: 1, type: 2, amount: 3, cur: 4, base: 5, tag: 6, photo: 7, note: 8, goal: 9, id: 10 };
+const HEADERS = ['日期', '进出', '金额', '货币', '结算金额', '分类', '账户', '照片', '备注', '目标', '编号'];
+const COL = { date: 1, type: 2, amount: 3, cur: 4, base: 5, tag: 6, acc: 7, photo: 8, note: 9, goal: 10, id: 11 };
 const SYM = { SGD: 'SGD ', MYR: 'MYR ', USD: 'USD ' };
 const fmt_ = code => { const s = SYM[code] || ''; return '+"' + s + '"#,##0.00;-"' + s + '"#,##0.00'; };
 const GOAL_SHEET = '目标';
@@ -103,7 +103,6 @@ function doPost(e) {
       props.setProperty('SUB_EMAIL', d.subEmail ? 'true' : 'false');
       props.setProperty('BASE', d.baseCode || 'SGD');
       writeSubs_(ss, d.subs || [], d.baseCode || 'SGD');
-      ss.getSheetByName(SHEET_NAME) && ss.getSheetByName(SHEET_NAME).getRange('L1').setValue('总存款（' + (d.baseCode || 'SGD') + '）');
       if (d.emailOn || d.subEmail) {
         try { ensureDailyTrigger_(); } catch (e) { /* 需要先在编辑器运行 setup 授权 */ }
       }
@@ -122,7 +121,8 @@ function doPost(e) {
         row = sh.getLastRow();
       }
       sh.getRange(row, COL.date).setValue(d.date);
-      sh.getRange(row, COL.type).setValue(amount >= 0 ? '存入' : '取出');
+      sh.getRange(row, COL.type).setValue(d.transfer ? '转账' : (amount >= 0 ? '存入' : '取出'));
+      sh.getRange(row, COL.acc).setValue(d.transfer ? (d.account || '') + ' → ' + (d.toAccount || '') : (d.account || ''));
       sh.getRange(row, COL.amount).setValue(amount).setNumberFormat(fmt_(d.currency || 'SGD'));
       sh.getRange(row, COL.cur).setValue(d.currency || 'SGD');
       sh.getRange(row, COL.base).setValue(Number(d.base != null ? d.base : amount)).setNumberFormat(fmt_(d.baseCode || 'SGD'));
@@ -130,7 +130,7 @@ function doPost(e) {
       sh.getRange(row, COL.tag).setValue(d.tag || '');
       sh.getRange(row, COL.goal).setValue(d.goal || '');
       sh.getRange(row, COL.id).setValue(id);
-      sh.getRange(row, 1, 1, 9).setFontColor(amount >= 0 ? '#16A34A' : '#DC2626');
+      sh.getRange(row, 1, 1, 10).setFontColor(d.transfer ? '#6B7280' : (amount >= 0 ? '#16A34A' : '#DC2626'));
 
       const photoCell = sh.getRange(row, COL.photo);
       if (d.photo) {
@@ -170,7 +170,16 @@ function getSpreadsheet_() {
 
 function getSheet_(ss) {
   let sh = ss.getSheetByName(SHEET_NAME);
-  if (sh) return sh;
+  if (sh) {
+    // 旧版表格没有「账户」列：在「分类」后面插入一列（其他列自动右移）
+    const head = sh.getRange(1, 1, 1, Math.max(1, sh.getLastColumn())).getDisplayValues()[0];
+    if (head.indexOf('账户') < 0 && head[5] === '分类') {
+      sh.insertColumnAfter(6);
+      sh.getRange(1, 7).setValue('账户').setFontWeight('bold').setBackground('#6610F2').setFontColor('#FFFFFF');
+      sh.setColumnWidth(7, 120);
+    }
+    return sh;
+  }
   sh = ss.getSheets()[0];
   sh.setName(SHEET_NAME);
   sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS])
@@ -184,16 +193,16 @@ function getSheet_(ss) {
   sh.setColumnWidth(COL.note, 200);
   sh.setColumnWidth(COL.goal, 110);
   sh.getRange('A:A').setNumberFormat('yyyy-mm-dd');
-  sh.getRange('J:J').setNumberFormat('@');
+  sh.getRange('K:K').setNumberFormat('@');
   sh.setColumnWidth(COL.cur, 60);
   sh.setColumnWidth(COL.base, 110);
   sh.hideColumns(COL.id);
   // 右侧汇总
-  sh.getRange('L1:L3').setValues([['总存款（结算）'], ['总存入'], ['总取出']]).setFontWeight('bold');
-  sh.getRange('M1:M3').setFormulas([['=SUM(E2:E)'], ['=SUMIF(E2:E,">0")'], ['=-SUMIF(E2:E,"<0")']])
+  sh.getRange('M1:M3').setValues([['总收支（结算）'], ['总存入'], ['总取出']]).setFontWeight('bold');
+  sh.getRange('N1:N3').setFormulas([['=SUMIF(B2:B,"<>转账",E2:E)'], ['=SUMIFS(E2:E,E2:E,">0",B2:B,"<>转账")'], ['=-SUMIFS(E2:E,E2:E,"<0",B2:B,"<>转账")']])
     .setNumberFormat('#,##0.00');
-  sh.setColumnWidth(12, 120);
   sh.setColumnWidth(13, 120);
+  sh.setColumnWidth(14, 120);
   return sh;
 }
 
