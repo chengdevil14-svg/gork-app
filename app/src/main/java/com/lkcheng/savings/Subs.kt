@@ -197,7 +197,8 @@ fun SubRow(s: Sub, exp: Color, onClick: () -> Unit) {
                     if (!s.active) {
                         "已取消"
                     } else if (next != null && days != null) {
-                        (if (s.isIncome) "下次入账 " else "下次扣款 ") + "${dateCn(next)}（${daysWord(days)}）" + if (s.autoRecord) " · 自动记账" else ""
+                        (if (s.isIncome) "下次入账 " else "下次扣款 ") + "${dateCn(next)}（${daysWord(days)}）" + (if (s.autoRecord) " · 自动记账" else "") +
+                            if (!s.inDaily) " · 不计入每日" else ""
                     } else {
                         ""
                     },
@@ -233,6 +234,7 @@ fun SubDialog(
     var accId by remember { mutableLongStateOf(initial?.accountId?.takeIf { id -> accounts.any { it.id == id } } ?: live.firstOrNull()?.id ?: 0L) }
     var topUp by remember { mutableStateOf((initial?.toAccountId ?: 0L) != 0L) }
     var isIncome by remember { mutableStateOf(initial?.isIncome ?: false) }
+    var inDaily by remember { mutableStateOf(initial?.inDaily ?: true) }
     var toAccId by remember { mutableLongStateOf(initial?.toAccountId ?: 0L) }
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var amountText by remember { mutableStateOf(initial?.let { plainNumber(it.amount) } ?: "") }
@@ -270,6 +272,7 @@ fun SubDialog(
             accountId = accId,
             toAccountId = if (topUp && !isIncome) toAccId else 0L,
             isIncome = isIncome,
+            inDaily = inDaily,
             recordedUntil = if (changedDate) d.minusDays(1).toString() else initial?.recordedUntil ?: "",
         )
     }
@@ -364,6 +367,17 @@ fun SubDialog(
                     }
                 }
                 HorizontalDivider()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(if (isIncome) "计入每日收入" else "计入每日成本")
+                        Text(
+                            if (inDaily) "按当月天数分摊到每天" else "不分摊；扣款那天算作日常花费",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = inDaily, onCheckedChange = { inDaily = it })
+                }
                 if (!isIncome) Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("我想取消这个订阅")
