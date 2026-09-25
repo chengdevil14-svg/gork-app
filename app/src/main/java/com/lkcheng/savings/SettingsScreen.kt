@@ -101,6 +101,9 @@ class AppPrefs(store: Store) {
     val dueStyle = IntPref(store, K.DUE_STYLE, 0)
     val emailOn = BoolPref(store, K.EMAIL_ON, false)
     val popupOn = BoolPref(store, K.POPUP_ON, true)
+    val homeAcc = BoolPref(store, "home_acc", true)
+    val homeDaily = BoolPref(store, "home_daily", true)
+    val homeTodo = BoolPref(store, "home_todo", true)
     val subOn = BoolPref(store, K.SUB_ON, true)
     val subH = IntPref(store, K.SUB_H, 10)
     val subM = IntPref(store, K.SUB_M, 0)
@@ -147,6 +150,7 @@ fun SettingsScreen(
         "currency" to "货币",
         "remind" to "提醒与通知",
         "popup" to "打开 app 时提醒",
+        "home" to "首页显示",
         "sync" to "Google Sheet 同步",
         "data" to "数据与备份",
     )
@@ -189,6 +193,8 @@ fun SettingsScreen(
                         MenuItem("🔔", "提醒与通知", "问候、饭点记账、还款日、订阅续费 · $remTxt") { page = "remind" }
                         HorizontalDivider()
                         MenuItem("📋", "打开 app 时提醒", if (prefs.popupOn.value) "已开启" else "已关闭") { page = "popup" }
+                        HorizontalDivider()
+                        MenuItem("🏠", "首页显示", "选择首页要显示哪些区块") { page = "home" }
                     }
                     Spacer(Modifier.height(12.dp))
                     Card(shape = RoundedCornerShape(16.dp)) {
@@ -210,6 +216,21 @@ fun SettingsScreen(
                 "currency" -> Column { CurrencyPage(onCurrency) }
                 "remind" -> Column { RemindPage(prefs, goals, subs, syncUrl, onEditGoal, onEditSub) }
                 "popup" -> Column { PopupPage(prefs) }
+                "home" -> Column {
+                    Card(shape = RoundedCornerShape(16.dp)) {
+                        SwitchRow("💳 账户余额", "首页显示各账户余额", prefs.homeAcc.value) { prefs.homeAcc.value = it }
+                        HorizontalDivider()
+                        SwitchRow("📅 每日成本", "首页最下面显示每日成本", prefs.homeDaily.value) { prefs.homeDaily.value = it }
+                        HorizontalDivider()
+                        SwitchRow("📝 还没填写", "首页显示待设置清单", prefs.homeTodo.value) { prefs.homeTodo.value = it }
+                    }
+                    Text(
+                        "隐藏的内容仍然可以在底部的「计划 / 报表 / 账户」页面看到。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+                }
                 "sync" -> Column { SyncPage(syncUrl, sheetUrl, onSyncUrl, onSheetFound) }
                 "data" -> Column { DataPage(entries, onClearAll) }
             }

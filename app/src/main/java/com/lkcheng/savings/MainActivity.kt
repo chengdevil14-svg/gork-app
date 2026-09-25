@@ -20,6 +20,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -59,6 +62,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -253,8 +258,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
     val deposits = remember { mutableStateListOf<Deposit>().apply { addAll(store.loadDeposits()) } }
     var editingDep by remember { mutableStateOf<Deposit?>(null) }
     var newDep by remember { mutableStateOf(false) }
-    var showAccounts by remember { mutableStateOf(false) }
-    var showReport by remember { mutableStateOf(false) }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
     var prefill by remember { mutableStateOf<ScanResult?>(null) }
     var scanBusy by remember { mutableStateOf(false) }
     var greenIncome by remember { mutableStateOf(store.greenForIncome) }
@@ -409,45 +413,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
         if (uri != null) startScan(uri)
     }
 
-    if (showAccounts) {
-        AccountsScreen(
-            accounts = accounts.toList(),
-            entries = entries.toList(),
-            inc = inc,
-            exp = exp,
-            onSave = { a ->
-                val i = accounts.indexOfFirst { it.id == a.id }
-                if (i >= 0) accounts[i] = a else accounts.add(a)
-                persistAccounts()
-                runCommute()
-            },
-            onDelete = { a ->
-                accounts.removeAll { it.id == a.id }
-                for (i in entries.indices) {
-                    val e = entries[i]
-                    if (e.accountId == a.id || e.toAccountId == a.id) {
-                        entries[i] = e.copy(
-                            accountId = if (e.accountId == a.id) 0L else e.accountId,
-                            toAccountId = if (e.toAccountId == a.id) 0L else e.toAccountId,
-                            synced = false,
-                        )
-                    }
-                }
-                persistAccounts()
-                persist()
-            },
-            onOpenEntry = { e -> editing = e },
-            onClose = { showAccounts = false },
-        )
-    } else if (showReport) {
-        val allE = entries.toList()
-        val nw = netWorth(allE, accounts.toList())
-        ReportScreen(
-            allE, accounts.toList(), subs.toList(),
-            goals.toList().map { g -> g to calcGoal(g, allE, nw) },
-            deposits.toList(), inc, exp,
-        ) { showReport = false }
-    } else if (showSettings) {
+    if (showSettings) {
         SettingsScreen(
             theme = theme,
             onTheme = onThemeChange,
@@ -490,137 +456,66 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
             onClose = { showSettings = false },
         )
     } else {
-    Scaffold(
+    Column(Modifier.fillMaxSize()) {
+    Box(
+        Modifier
+            .weight(1f)
+            .consumeWindowInsets(WindowInsets.navigationBars)
+    ) {
+    when (tab) {
+    3 -> {
+        AccountsScreen(
+            accounts = accounts.toList(),
+            entries = entries.toList(),
+            inc = inc,
+            exp = exp,
+            onSave = { a ->
+                val i = accounts.indexOfFirst { it.id == a.id }
+                if (i >= 0) accounts[i] = a else accounts.add(a)
+                persistAccounts()
+                runCommute()
+            },
+            onDelete = { a ->
+                accounts.removeAll { it.id == a.id }
+                for (i in entries.indices) {
+                    val e = entries[i]
+                    if (e.accountId == a.id || e.toAccountId == a.id) {
+                        entries[i] = e.copy(
+                            accountId = if (e.accountId == a.id) 0L else e.accountId,
+                            toAccountId = if (e.toAccountId == a.id) 0L else e.toAccountId,
+                            synced = false,
+                        )
+                    }
+                }
+                persistAccounts()
+                persist()
+            },
+            onOpenEntry = { e -> editing = e },
+            onClose = { tab = 0 },
+        )
+    }
+    2 -> {
+        val allE = entries.toList()
+        val nw = netWorth(allE, accounts.toList())
+        ReportScreen(
+            allE, accounts.toList(), subs.toList(),
+            goals.toList().map { g -> g to calcGoal(g, allE, nw) },
+            deposits.toList(), inc, exp,
+        ) { tab = 0 }
+    }
+    4 -> SearchScreen(entries.toList(), accounts.toList(), inc, exp, onOpen = { e -> editing = e }, onClose = { tab = 0 })
+    1 -> Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("成长账本", fontWeight = FontWeight.Bold) },
-                actions = {
-                    if (syncUrl.isNotBlank()) {
-                        if (syncing) {
-                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        } else {
-                            TextButton(onClick = { syncNow() }) {
-                                Text(
-                                    if (unsynced > 0) "☁ 待同步 $unsynced" else "☁ 已同步",
-                                    color = if (syncMsg.startsWith("同步失败")) exp else MaterialTheme.colorScheme.primary,
-                                    fontSize = 13.sp,
-                                )
-                            }
-                        }
-                    }
-                    IconButton(onClick = { showReport = true }) { Text("📊", fontSize = 20.sp) }
-                    IconButton(onClick = { showAccounts = true }) { Text("💳", fontSize = 20.sp) }
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Filled.Settings, contentDescription = "设置")
-                    }
-                },
-            )
-        },
-        floatingActionButton = {
-            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        if (!scanBusy) scanPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                    },
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    icon = {
-                        if (scanBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("🧾")
-                    },
-                    text = { Text(if (scanBusy) "识别中…" else "识别截图") },
-                )
-                ExtendedFloatingActionButton(
-                    onClick = {
-                        prefill = null
-                        showAdd = true
-                    },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = Color.White,
-                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                    text = { Text("记一笔") },
-                )
-            }
+            TopAppBar(title = { Text("🎯 计划", fontWeight = FontWeight.Bold) })
         },
     ) { padding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 100.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (syncMsg.startsWith("同步失败")) {
-                item {
-                    Text(
-                        syncMsg + "（点右上角重试）",
-                        color = exp,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-            item {
-                SummaryCard(total, 0.0, month, monthIn, monthOut, inc, exp)
-            }
-            item {
-                AccountsStrip(accounts.toList(), entries.toList(), inc, exp) { showAccounts = true }
-            }
-
-            item {
-                MonthHeader(
-                    month = month,
-                    onPrev = { goToMonth(month.minusMonths(1)) },
-                    onNext = { goToMonth(month.plusMonths(1)) },
-                    onToday = { goToMonth(YearMonth.now()) },
-                )
-            }
-            item {
-                CalendarGrid(month, selected, daily, inc, exp) { selStr = it.toString() }
-            }
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "${selected.monthValue}月${selected.dayOfMonth}日 ${weekdayCn(selected)}",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (dayEntries.isNotEmpty()) {
-                        Text(
-                            signedMoney(dayNet),
-                            color = if (dayNet >= 0) inc else exp,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                }
-            }
-            if (dayEntries.isEmpty()) {
-                item {
-                    Text(
-                        "这天还没有记录，点右下角「记一笔」添加",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 16.dp),
-                    )
-                }
-            }
-            items(dayEntries, key = { it.id }) { e ->
-                EntryRow(
-                    e, inc, exp,
-                    showSync = syncUrl.isNotBlank(),
-                    goalName = goals.firstOrNull { it.id == e.goalId }?.name ?: "",
-                    accountText = if (e.isTransfer) {
-                        accName(accOf(e, accounts), accounts) + " → " + accName(e.toAccountId, accounts)
-                    } else if (accounts.size > 1) {
-                        accName(accOf(e, accounts), accounts)
-                    } else {
-                        ""
-                    },
-                ) { editing = e }
-            }
             item {
                 Row(
                     modifier = Modifier
@@ -701,7 +596,146 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
             items(deposits.toList(), key = { "d" + it.id }) { d ->
                 DepositRow(d, allEntries, inc) { editingDep = d }
             }
+        }
+    }
+    else -> {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("成长账本", fontWeight = FontWeight.Bold) },
+                actions = {
+                    if (syncUrl.isNotBlank()) {
+                        if (syncing) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            TextButton(onClick = { syncNow() }) {
+                                Text(
+                                    if (unsynced > 0) "☁ 待同步 $unsynced" else "☁ 已同步",
+                                    color = if (syncMsg.startsWith("同步失败")) exp else MaterialTheme.colorScheme.primary,
+                                    fontSize = 13.sp,
+                                )
+                            }
+                        }
+                    }
+                    IconButton(onClick = { showSettings = true }) {
+                        Icon(Icons.Filled.Settings, contentDescription = "设置")
+                    }
+                },
+            )
+        },
+        floatingActionButton = {
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        if (!scanBusy) scanPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    icon = {
+                        if (scanBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("🧾")
+                    },
+                    text = { Text(if (scanBusy) "识别中…" else "识别截图") },
+                )
+                ExtendedFloatingActionButton(
+                    onClick = {
+                        prefill = null
+                        showAdd = true
+                    },
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = Color.White,
+                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    text = { Text("记一笔") },
+                )
+            }
+        },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 100.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (syncMsg.startsWith("同步失败")) {
+                item {
+                    Text(
+                        syncMsg + "（点右上角重试）",
+                        color = exp,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
             item {
+                SummaryCard(total, 0.0, month, monthIn, monthOut, inc, exp)
+            }
+            if (prefs.homeAcc.value) item {
+                AccountsStrip(accounts.toList(), entries.toList(), inc, exp) { tab = 3 }
+            }
+
+            item {
+                MonthHeader(
+                    month = month,
+                    onPrev = { goToMonth(month.minusMonths(1)) },
+                    onNext = { goToMonth(month.plusMonths(1)) },
+                    onToday = { goToMonth(YearMonth.now()) },
+                    onPick = {
+                        android.app.DatePickerDialog(context, { _, y, mo, d ->
+                            val picked = LocalDate.of(y, mo + 1, d)
+                            monthStr = YearMonth.from(picked).toString()
+                            selStr = picked.toString()
+                        }, selected.year, selected.monthValue - 1, selected.dayOfMonth).show()
+                    },
+                )
+            }
+            item {
+                CalendarGrid(month, selected, daily, inc, exp) { selStr = it.toString() }
+            }
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "${selected.monthValue}月${selected.dayOfMonth}日 ${weekdayCn(selected)}",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (dayEntries.isNotEmpty()) {
+                        Text(
+                            signedMoney(dayNet),
+                            color = if (dayNet >= 0) inc else exp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+            if (dayEntries.isEmpty()) {
+                item {
+                    Text(
+                        "这天还没有记录，点右下角「记一笔」添加",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 16.dp),
+                    )
+                }
+            }
+            items(dayEntries, key = { it.id }) { e ->
+                EntryRow(
+                    e, inc, exp,
+                    showSync = syncUrl.isNotBlank(),
+                    goalName = goals.firstOrNull { it.id == e.goalId }?.name ?: "",
+                    accountText = if (e.isTransfer) {
+                        accName(accOf(e, accounts), accounts) + " → " + accName(e.toAccountId, accounts)
+                    } else if (accounts.size > 1) {
+                        accName(accOf(e, accounts), accounts)
+                    } else {
+                        ""
+                    },
+                ) { editing = e }
+            }
+            if (prefs.homeDaily.value) item {
                 Text(
                     "📅 每日成本",
                     style = MaterialTheme.typography.titleMedium,
@@ -709,7 +743,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                     modifier = Modifier.padding(top = 16.dp),
                 )
             }
-            item {
+            if (prefs.homeDaily.value) item {
                 val allE = entries.toList()
                 val nowYm = YearMonth.now()
                 val outNow = -allE.filter { YearMonth.from(it.date) == nowYm }.sumOf { minOf(0.0, statAmt(it, accList)) }
@@ -723,15 +757,15 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                     exp,
                 )
             }
-            item {
+            if (prefs.homeTodo.value) item {
                 val todos = ArrayList<Todo>()
                 val live = accList.filter { !it.archived }
-                if (live.size <= 1) todos.add(Todo("新增你的银行卡 / 信用卡 / 交通卡账户") { showAccounts = true })
+                if (live.size <= 1) todos.add(Todo("新增你的银行卡 / 信用卡 / 交通卡账户") { tab = 3 })
                 for (a in live.filter { acct -> acct.opening == 0.0 && entries.none { e -> accOf(e, accList) == acct.id || e.toAccountId == acct.id } }) {
-                    todos.add(Todo("「${a.name}」还没填目前余额") { showAccounts = true })
+                    todos.add(Todo("「${a.name}」还没填目前余额") { tab = 3 })
                 }
-                for (a in live.filter { it.type == 2 && it.limit <= 0 }) todos.add(Todo("信用卡「${a.name}」还没填额度") { showAccounts = true })
-                for (a in live.filter { it.type == TYPE_CARD && !it.commuteOn }) todos.add(Todo("交通卡「${a.name}」可以设置通勤自动扣款") { showAccounts = true })
+                for (a in live.filter { it.type == 2 && it.limit <= 0 }) todos.add(Todo("信用卡「${a.name}」还没填额度") { tab = 3 })
+                for (a in live.filter { it.type == TYPE_CARD && !it.commuteOn }) todos.add(Todo("交通卡「${a.name}」可以设置通勤自动扣款") { tab = 3 })
                 if (subs.none { it.isIncome && it.active }) todos.add(Todo("加入固定收入（工资）") { newSub = true })
                 if (subs.none { !it.isIncome && it.active }) todos.add(Todo("加入固定支出（房租、电话费、订阅）") { newSub = true })
                 for (g in goals.filter { it.debt }) {
@@ -748,6 +782,21 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                 TodoCard(todos)
             }
         }
+    }
+    }
+    }
+    }
+    NavigationBar {
+        val navItems = listOf("🏠" to "首页", "🎯" to "计划", "📊" to "报表", "💳" to "账户", "🔍" to "查询")
+        for ((i, it) in navItems.withIndex()) {
+            NavigationBarItem(
+                selected = tab == i,
+                onClick = { tab = i },
+                icon = { Text(it.first, fontSize = 20.sp) },
+                label = { Text(it.second, fontSize = 12.sp) },
+            )
+        }
+    }
     }
     }
 
@@ -1003,17 +1052,19 @@ fun Stat(label: String, value: String, color: Color, modifier: Modifier) {
 }
 
 @Composable
-fun MonthHeader(month: YearMonth, onPrev: () -> Unit, onNext: () -> Unit, onToday: () -> Unit) {
+fun MonthHeader(month: YearMonth, onPrev: () -> Unit, onNext: () -> Unit, onToday: () -> Unit, onPick: () -> Unit = {}) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onPrev) {
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "上个月")
         }
         Text(
-            "${month.year}年${month.monthValue}月",
+            "${month.year}年${month.monthValue}月 ▾",
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClick = onPick),
         )
         if (month != YearMonth.now()) {
             TextButton(onClick = onToday) { Text("回到本月") }
