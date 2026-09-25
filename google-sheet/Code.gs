@@ -7,8 +7,8 @@
  */
 
 const SHEET_NAME = '记录';
-const HEADERS = ['日期', '进出', '金额', '货币', '结算金额', '分类', '账户', '照片', '备注', '目标', '编号'];
-const COL = { date: 1, type: 2, amount: 3, cur: 4, base: 5, tag: 6, acc: 7, photo: 8, note: 9, goal: 10, id: 11 };
+const HEADERS = ['日期', '进出', '金额', '货币', '结算金额', '分类', '账户', '照片', '备注', '目标', '编号', '计入收支'];
+const COL = { date: 1, type: 2, amount: 3, cur: 4, base: 5, tag: 6, acc: 7, photo: 8, note: 9, goal: 10, id: 11, stat: 12 };
 const SYM = { SGD: 'SGD ', MYR: 'MYR ', USD: 'USD ' };
 const fmt_ = code => { const s = SYM[code] || ''; return '+"' + s + '"#,##0.00;-"' + s + '"#,##0.00'; };
 const GOAL_SHEET = '目标';
@@ -103,6 +103,7 @@ function doPost(e) {
       props.setProperty('SUB_EMAIL', d.subEmail ? 'true' : 'false');
       props.setProperty('BASE', d.baseCode || 'SGD');
       writeSubs_(ss, d.subs || [], d.baseCode || 'SGD');
+      rebuildSummaries_(ss, d.baseCode || 'SGD');
       if (d.emailOn || d.subEmail) {
         try { ensureDailyTrigger_(); } catch (e) { /* 需要先在编辑器运行 setup 授权 */ }
       }
@@ -130,6 +131,7 @@ function doPost(e) {
       sh.getRange(row, COL.tag).setValue(d.tag || '');
       sh.getRange(row, COL.goal).setValue(d.goal || '');
       sh.getRange(row, COL.id).setValue(id);
+      sh.getRange(row, COL.stat).setValue(d.stat != null ? Number(d.stat) : (d.transfer ? 0 : Number(d.base)));
       sh.getRange(row, 1, 1, 10).setFontColor(d.transfer ? '#6B7280' : (amount >= 0 ? '#16A34A' : '#DC2626'));
 
       const photoCell = sh.getRange(row, COL.photo);
@@ -178,6 +180,11 @@ function getSheet_(ss) {
       sh.getRange(1, 7).setValue('账户').setFontWeight('bold').setBackground('#6610F2').setFontColor('#FFFFFF');
       sh.setColumnWidth(7, 120);
     }
+    if (!sh.getFilter()) sh.getRange(1, 1, sh.getMaxRows(), HEADERS.length).createFilter();
+    if (sh.getRange(1, COL.stat).getDisplayValue() !== '计入收支') {
+      sh.getRange(1, COL.stat).setValue('计入收支').setFontWeight('bold');
+      sh.hideColumns(COL.id, 2);
+    }
     return sh;
   }
   sh = ss.getSheets()[0];
@@ -185,6 +192,7 @@ function getSheet_(ss) {
   sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS])
     .setFontWeight('bold').setBackground('#6610F2').setFontColor('#FFFFFF');
   sh.setFrozenRows(1);
+  sh.getRange(1, 1, sh.getMaxRows(), HEADERS.length).createFilter();
   sh.setColumnWidth(COL.date, 110);
   sh.setColumnWidth(COL.type, 60);
   sh.setColumnWidth(COL.amount, 110);
@@ -196,7 +204,7 @@ function getSheet_(ss) {
   sh.getRange('K:K').setNumberFormat('@');
   sh.setColumnWidth(COL.cur, 60);
   sh.setColumnWidth(COL.base, 110);
-  sh.hideColumns(COL.id);
+  sh.hideColumns(COL.id, 2);
   // 右侧汇总
   sh.getRange('M1:M3').setValues([['总收支（结算）'], ['总存入'], ['总取出']]).setFontWeight('bold');
   sh.getRange('N1:N3').setFormulas([['=SUMIF(B2:B,"<>转账",E2:E)'], ['=SUMIFS(E2:E,E2:E,">0",B2:B,"<>转账")'], ['=-SUMIFS(E2:E,E2:E,"<0",B2:B,"<>转账")']])
@@ -249,6 +257,94 @@ function writeSubs_(ss, subs, base) {
   gs.autoResizeColumns(1, head.length);
 }
 
+// ---------- 每日 / 每月 / 每年 / 分类 汇总 ----------
+function rebuildSummaries_(ss, base) {
+  const sh = getSheet_(ss);
+  const last = sh.getLastRow();
+  if (last < 2) return;
+  const tz = ss.getSpreadsheetTimeZone();
+  const vals = sh.getRange(2, 1, last - 1, HEADERS.length).getValues();
+  const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
+  const day = {}, mon = {}, yr = {}, catMon = {};
+  const add = (m, k) => (m[k] = m[k] || { in: 0, out: 0, n: 0, cats: {} });
+  vals.forEach(r => {
+    let d = r[COL.date - 1];
+    if (!(d instanceof Date)) d = new Date(String(d).replace(/-/g, '/'));
+    if (isNaN(d)) return;
+    const type = r[COL.type - 1];
+    let v = r[COL.stat - 1];
+    if (v === '' || v === null) v = type === '转账' ? (r[COL.tag - 1] === '交通卡充值' ? Number(r[COL.base - 1]) : 0) : Number(r[COL.base - 1]);
+    v = Number(v) || 0;
+    if (v === 0) return;
+    const dk = Utilities.formatDate(d, tz, 'yyyy-MM-dd');
+    const mk = dk.slice(0, 7), yk = dk.slice(0, 4);
+    const cat = r[COL.tag - 1] || '未分类';
+    [add(day, dk), add(mon, mk), add(yr, yk)].forEach(o => {
+      o.n++;
+      if (v > 0) o.in += v; else { o.out += -v; o.cats[cat] = (o.cats[cat] || 0) - v; }
+    });
+    if (v < 0) { catMon[cat] = catMon[cat] || {}; catMon[cat][mk] = (catMon[cat][mk] || 0) - v; }
+  });
+  const top = (cats, n) => Object.keys(cats).sort((a, b) => cats[b] - cats[a]).slice(0, n)
+    .map(k => k + ' ' + cats[k].toFixed(2)).join('、');
+  const money = '#,##0.00';
+
+  const dRows = Object.keys(day).sort().reverse().map(k => {
+    const o = day[k], dt = new Date(k.replace(/-/g, '/'));
+    return [dt, '星期' + WEEK[dt.getDay()], o.in, o.out, o.in - o.out, o.n, top(o.cats, 1)];
+  });
+  writeTable_(ss, '每日汇总', ['日期', '星期', '存入', '取出', '结余', '笔数', '花最多'], dRows, [[1, 'yyyy-mm-dd'], [3, money], [4, money], [5, money]], '#3E95D6');
+
+  const mRows = Object.keys(mon).sort().reverse().map(k => {
+    const o = mon[k], p = k.split('-').map(Number);
+    const now = new Date();
+    const days = (p[0] === now.getFullYear() && p[1] === now.getMonth() + 1) ? now.getDate() : new Date(p[0], p[1], 0).getDate();
+    return [k, o.in, o.out, o.in - o.out, o.in > 0 ? (o.in - o.out) / o.in : '', o.out / days, o.n, top(o.cats, 3)];
+  });
+  writeTable_(ss, '每月汇总', ['月份', '存入', '取出', '结余', '储蓄率', '日均支出', '笔数', '支出前 3 分类'], mRows, [[2, money], [3, money], [4, money], [5, '0%'], [6, money]], '#2E9D5B');
+
+  const yRows = Object.keys(yr).sort().reverse().map(k => {
+    const o = yr[k], now = new Date();
+    const months = Number(k) === now.getFullYear() ? now.getMonth() + 1 : 12;
+    return [k, o.in, o.out, o.in - o.out, o.in > 0 ? (o.in - o.out) / o.in : '', o.out / months, o.n, top(o.cats, 3)];
+  });
+  writeTable_(ss, '每年汇总', ['年份', '存入', '取出', '结余', '储蓄率', '月均支出', '笔数', '支出前 3 分类'], yRows, [[2, money], [3, money], [4, money], [5, '0%'], [6, money]], '#9B4DDB');
+
+  const months = [];
+  const now = new Date();
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push(Utilities.formatDate(d, tz, 'yyyy-MM'));
+  }
+  const cats = Object.keys(catMon).sort((a, b) => {
+    const s = c => months.reduce((t, m) => t + (catMon[c][m] || 0), 0);
+    return s(b) - s(a);
+  });
+  const cRows = cats.map(c => [c].concat(months.map(m => catMon[c][m] || '')).concat([months.reduce((t, m) => t + (catMon[c][m] || 0), 0)]));
+  const fm = months.map((m, i) => [i + 2, money]).concat([[months.length + 2, money]]);
+  writeTable_(ss, '分类汇总', ['分类（支出）'].concat(months).concat(['12 个月合计']), cRows, fm, '#E0538A');
+
+  ['记录', '每日汇总', '每月汇总', '每年汇总', '分类汇总', '目标', '订阅'].forEach((n, i) => {
+    const s = ss.getSheetByName(n);
+    if (s) { ss.setActiveSheet(s); ss.moveActiveSheet(i + 1); }
+  });
+  ss.setActiveSheet(sh);
+}
+
+function writeTable_(ss, name, head, rows, formats, color) {
+  let s = ss.getSheetByName(name);
+  if (!s) s = ss.insertSheet(name);
+  s.clear();
+  s.setTabColor(color);
+  s.getRange(1, 1, 1, head.length).setValues([head]).setFontWeight('bold').setBackground(color).setFontColor('#FFFFFF');
+  if (rows.length) {
+    s.getRange(2, 1, rows.length, head.length).setValues(rows);
+    formats.forEach(f => s.getRange(2, f[0], rows.length, 1).setNumberFormat(f[1]));
+  }
+  s.setFrozenRows(1);
+  s.autoResizeColumns(1, head.length);
+}
+
 function findRow_(sh, id) {
   const last = sh.getLastRow();
   if (last < 2) return 0;
@@ -260,7 +356,7 @@ function findRow_(sh, id) {
 function sortByDate_(sh) {
   const last = sh.getLastRow();
   if (last > 2) {
-    sh.getRange(2, 1, last - 1, HEADERS.length).sort([{ column: COL.date, ascending: true }, { column: COL.id, ascending: true }]);
+    sh.getRange(2, 1, last - 1, HEADERS.length).sort([{ column: COL.date, ascending: false }, { column: COL.id, ascending: false }]);
   }
 }
 

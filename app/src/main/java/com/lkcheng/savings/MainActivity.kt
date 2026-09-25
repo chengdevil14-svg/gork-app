@@ -356,7 +356,8 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                     val gName = goals.firstOrNull { it.id == e.goalId }?.name ?: ""
                     val aName = accounts.firstOrNull { it.id == accOf(e, accounts) }?.name ?: ""
                     val tName = if (e.isTransfer) accounts.firstOrNull { it.id == e.toAccountId }?.name ?: "" else ""
-                    withContext(Dispatchers.IO) { Sync.upsert(context, url, e, gName, aName, tName) }
+                    val st = statAmt(e, accounts.toList())
+                    withContext(Dispatchers.IO) { Sync.upsert(context, url, e, gName, aName, tName, st) }
                     val i = entries.indexOfFirst { it.id == e.id }
                     if (i >= 0 && entries[i] == e) {
                         entries[i] = e.copy(synced = true, photoSent = e.photo.isNotEmpty())

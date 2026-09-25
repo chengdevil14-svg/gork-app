@@ -53,7 +53,7 @@ object Sync {
         call(url, JSONObject().put("action", "delete").put("id", id.toString()))
     }
 
-    fun upsert(context: Context, url: String, e: Entry, goalName: String, accountName: String, toAccountName: String) {
+    fun upsert(context: Context, url: String, e: Entry, goalName: String, accountName: String, toAccountName: String, stat: Double) {
         val body = JSONObject()
             .put("action", "upsert")
             .put("id", e.id.toString())
@@ -68,6 +68,7 @@ object Sync {
             .put("account", accountName)
             .put("toAccount", toAccountName)
             .put("transfer", e.isTransfer)
+            .put("stat", stat)
             .put("hasPhoto", e.photo.isNotEmpty())
         if (e.photo.isNotEmpty() && !e.photoSent) {
             val b64 = Photos.base64(context, e.photo)
