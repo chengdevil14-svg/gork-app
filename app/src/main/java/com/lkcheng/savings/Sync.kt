@@ -59,6 +59,9 @@ object Sync {
             .put("id", e.id.toString())
             .put("date", e.date.toString())
             .put("amount", e.amount)
+            .put("currency", e.currency)
+            .put("base", e.base)
+            .put("baseCode", Cur.code)
             .put("note", e.note)
             .put("tag", e.tag)
             .put("goal", goalName)
@@ -70,7 +73,22 @@ object Sync {
         call(url, body)
     }
 
-    fun goals(url: String, list: List<Pair<Goal, GoalStat>>, emailOn: Boolean) {
+    fun goals(url: String, list: List<Pair<Goal, GoalStat>>, emailOn: Boolean, subs: List<Sub>, subEmail: Boolean) {
+        val sArr = org.json.JSONArray()
+        for (x in subs) {
+            sArr.put(
+                JSONObject()
+                    .put("name", x.name)
+                    .put("amount", x.amount)
+                    .put("currency", x.currency)
+                    .put("cycle", CYCLE_NAMES.getOrElse(x.cycle) { "每月" })
+                    .put("next", nextBilling(x)?.toString() ?: "")
+                    .put("remindBefore", x.remindBefore)
+                    .put("wantCancel", x.wantCancel)
+                    .put("active", x.active)
+                    .put("monthlyBase", monthlyCost(x))
+            )
+        }
         val arr = org.json.JSONArray()
         for ((g, st) in list) {
             arr.put(
@@ -90,6 +108,10 @@ object Sync {
                     .put("remindBefore", g.remindBefore)
             )
         }
-        call(url, JSONObject().put("action", "goals").put("goals", arr).put("emailOn", emailOn))
+        call(
+            url,
+            JSONObject().put("action", "goals").put("goals", arr).put("emailOn", emailOn)
+                .put("subs", sArr).put("subEmail", subEmail).put("baseCode", Cur.code),
+        )
     }
 }

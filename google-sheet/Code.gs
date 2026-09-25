@@ -1,13 +1,16 @@
 /**
  * 存钱记录 → Google Sheet 同步脚本
- * 「记录」表：日期 | 进出 | 金额 | 分类 | 照片 | 备注 | 目标 | 编号
+ * 「记录」表：日期 | 进出 | 金额 | 货币 | 结算金额 | 分类 | 照片 | 备注 | 目标 | 编号
+ * 「订阅」表：所有订阅支出
  * 「目标」表：每个存款目标 / 欠款的进度
  * 照片直接嵌入格子里（不经过 Google Drive）。
  */
 
 const SHEET_NAME = '记录';
-const HEADERS = ['日期', '进出', '金额', '分类', '照片', '备注', '目标', '编号'];
-const COL = { date: 1, type: 2, amount: 3, tag: 4, photo: 5, note: 6, goal: 7, id: 8 };
+const HEADERS = ['日期', '进出', '金额', '货币', '结算金额', '分类', '照片', '备注', '目标', '编号'];
+const COL = { date: 1, type: 2, amount: 3, cur: 4, base: 5, tag: 6, photo: 7, note: 8, goal: 9, id: 10 };
+const SYM = { SGD: 'S$', MYR: 'RM', USD: 'US$' };
+const fmt_ = code => { const s = SYM[code] || '$'; return '+"' + s + '"#,##0.00;-"' + s + '"#,##0.00'; };
 const GOAL_SHEET = '目标';
 
 // 第一次先在编辑器里运行这个函数，完成授权并创建表格（也会开启每天 9 点的 Email 还款提醒检查）
@@ -26,8 +29,11 @@ function ensureDailyTrigger_() {
 // 每天自动运行：到了还款日（或提前 N 天）就发 Email
 function dailyCheck() {
   const props = PropertiesService.getScriptProperties();
-  if (props.getProperty('EMAIL_ON') !== 'true') return;
-  const goals = JSON.parse(props.getProperty('GOALS') || '[]');
+  const emailOn = props.getProperty('EMAIL_ON') === 'true';
+  const subEmail = props.getProperty('SUB_EMAIL') === 'true';
+  if (!emailOn && !subEmail) return;
+  const goals = emailOn ? JSON.parse(props.getProperty('GOALS') || '[]') : [];
+  const subs = subEmail ? JSON.parse(props.getProperty('SUBS') || '[]') : [];
   const tz = Session.getScriptTimeZone();
   const today = new Date(Utilities.formatDate(new Date(), tz, 'yyyy/MM/dd'));
   const lines = [];
@@ -46,10 +52,21 @@ function dailyCheck() {
     t += `${g.type === '欠款' ? '还欠' : '还差'} $${Number(g.remaining).toFixed(2)}。`;
     lines.push(t);
   });
+  subs.forEach(x => {
+    if (!x.active || !x.next) return;
+    const p = x.next.split('-').map(Number);
+    const due = new Date(p[0], p[1] - 1, p[2]);
+    const days = Math.round((due - today) / 86400000);
+    if (days !== (x.remindBefore || 0)) return;
+    const amt = (SYM[x.currency] || '') + Number(x.amount).toFixed(2);
+    lines.push(x.wantCancel
+      ? `✂️【${x.name}】${days === 0 ? '今天' : days + ' 天后'}会自动续费 ${amt}。你标记了想取消，记得在扣款前去取消！`
+      : `🔁【${x.name}】${days === 0 ? '今天' : days + ' 天后'}会扣款 ${amt}（${x.cycle}）。还在用吗？`);
+  });
   if (!lines.length) return;
   const email = Session.getEffectiveUser().getEmail();
   const ss = getSpreadsheet_();
-  MailApp.sendEmail(email, '💳 存钱记录：还款 / 存款日提醒', lines.join('\n\n') + '\n\n打开表格：' + ss.getUrl());
+  MailApp.sendEmail(email, '💳 存钱记录：还款 / 订阅提醒', lines.join('\n\n') + '\n\n打开表格：' + ss.getUrl());
 }
 
 function nextDue_(today, day) {
@@ -82,7 +99,12 @@ function doPost(e) {
       const props = PropertiesService.getScriptProperties();
       props.setProperty('GOALS', JSON.stringify(d.goals || []));
       props.setProperty('EMAIL_ON', d.emailOn ? 'true' : 'false');
-      if (d.emailOn) {
+      props.setProperty('SUBS', JSON.stringify(d.subs || []));
+      props.setProperty('SUB_EMAIL', d.subEmail ? 'true' : 'false');
+      props.setProperty('BASE', d.baseCode || 'SGD');
+      writeSubs_(ss, d.subs || [], d.baseCode || 'SGD');
+      ss.getSheetByName(SHEET_NAME) && ss.getSheetByName(SHEET_NAME).getRange('L1').setValue('总存款（' + (d.baseCode || 'SGD') + '）');
+      if (d.emailOn || d.subEmail) {
         try { ensureDailyTrigger_(); } catch (e) { /* 需要先在编辑器运行 setup 授权 */ }
       }
       return json_({ ok: true });
@@ -101,12 +123,14 @@ function doPost(e) {
       }
       sh.getRange(row, COL.date).setValue(d.date);
       sh.getRange(row, COL.type).setValue(amount >= 0 ? '存入' : '取出');
-      sh.getRange(row, COL.amount).setValue(amount);
+      sh.getRange(row, COL.amount).setValue(amount).setNumberFormat(fmt_(d.currency || 'SGD'));
+      sh.getRange(row, COL.cur).setValue(d.currency || 'SGD');
+      sh.getRange(row, COL.base).setValue(Number(d.base != null ? d.base : amount)).setNumberFormat(fmt_(d.baseCode || 'SGD'));
       sh.getRange(row, COL.note).setValue(d.note || '');
       sh.getRange(row, COL.tag).setValue(d.tag || '');
       sh.getRange(row, COL.goal).setValue(d.goal || '');
       sh.getRange(row, COL.id).setValue(id);
-      sh.getRange(row, 1, 1, 7).setFontColor(amount >= 0 ? '#16A34A' : '#DC2626');
+      sh.getRange(row, 1, 1, 9).setFontColor(amount >= 0 ? '#16A34A' : '#DC2626');
 
       const photoCell = sh.getRange(row, COL.photo);
       if (d.photo) {
@@ -160,14 +184,16 @@ function getSheet_(ss) {
   sh.setColumnWidth(COL.note, 200);
   sh.setColumnWidth(COL.goal, 110);
   sh.getRange('A:A').setNumberFormat('yyyy-mm-dd');
-  sh.getRange('C:C').setNumberFormat('+$#,##0.00;-$#,##0.00');
-  sh.getRange('H:H').setNumberFormat('@');
+  sh.getRange('J:J').setNumberFormat('@');
+  sh.setColumnWidth(COL.cur, 60);
+  sh.setColumnWidth(COL.base, 110);
   sh.hideColumns(COL.id);
   // 右侧汇总
-  sh.getRange('J1:J3').setValues([['总存款'], ['总存入'], ['总取出']]).setFontWeight('bold');
-  sh.getRange('K1:K3').setFormulas([['=SUM(C2:C)'], ['=SUMIF(C2:C,">0")'], ['=-SUMIF(C2:C,"<0")']])
-    .setNumberFormat('$#,##0.00');
-  sh.setColumnWidth(11, 120);
+  sh.getRange('L1:L3').setValues([['总存款（结算）'], ['总存入'], ['总取出']]).setFontWeight('bold');
+  sh.getRange('M1:M3').setFormulas([['=SUM(E2:E)'], ['=SUMIF(E2:E,">0")'], ['=-SUMIF(E2:E,"<0")']])
+    .setNumberFormat('#,##0.00');
+  sh.setColumnWidth(12, 120);
+  sh.setColumnWidth(13, 120);
   return sh;
 }
 
@@ -188,6 +214,27 @@ function writeGoals_(ss, goals) {
     gs.getRange(2, 6, rows.length, 1).setNumberFormat('0%');
     gs.getRange(2, 7, rows.length, 2).setNumberFormat('$#,##0.00');
     gs.getRange(2, 11, rows.length, 1).setNumberFormat('$#,##0.00');
+  }
+  gs.setFrozenRows(1);
+  gs.autoResizeColumns(1, head.length);
+}
+
+function writeSubs_(ss, subs, base) {
+  let gs = ss.getSheetByName('订阅');
+  if (!gs) gs = ss.insertSheet('订阅');
+  gs.clear();
+  const head = ['名称', '金额', '货币', '周期', '下次扣款', '每月约（' + base + '）', '想取消', '状态'];
+  gs.getRange(1, 1, 1, head.length).setValues([head])
+    .setFontWeight('bold').setBackground('#6610F2').setFontColor('#FFFFFF');
+  const rows = subs.map(x => [x.name, x.amount, x.currency, x.cycle, x.next, x.monthlyBase,
+    x.wantCancel ? '✂️ 是' : '', x.active ? '进行中' : '已取消']);
+  if (rows.length) {
+    gs.getRange(2, 1, rows.length, head.length).setValues(rows);
+    gs.getRange(2, 2, rows.length, 1).setNumberFormat('#,##0.00');
+    gs.getRange(2, 6, rows.length, 1).setNumberFormat('#,##0.00');
+    const n = rows.length + 2;
+    gs.getRange(n, 5).setValue('每月合计').setFontWeight('bold');
+    gs.getRange(n, 6).setFormula('=SUMIF(H2:H' + (n - 1) + ',"进行中",F2:F' + (n - 1) + ')').setNumberFormat('#,##0.00').setFontWeight('bold');
   }
   gs.setFrozenRows(1);
   gs.autoResizeColumns(1, head.length);

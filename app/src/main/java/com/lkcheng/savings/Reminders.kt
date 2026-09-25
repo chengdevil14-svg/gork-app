@@ -36,6 +36,11 @@ object K {
     const val DUE_STYLE = "due_style" // 0 通知, 1 闹钟式响铃
     const val EMAIL_ON = "email_on"
     const val POPUP_ON = "popup_on"
+    const val SUB_ON = "sub_on"
+    const val SUB_H = "sub_h"
+    const val SUB_M = "sub_m"
+    const val SUB_STYLE = "sub_style"
+    const val SUB_EMAIL = "sub_email"
     fun slotOn(k: String) = "rem_${k}_on"
     fun slotH(k: String) = "rem_${k}_h"
     fun slotM(k: String) = "rem_${k}_m"
@@ -104,6 +109,7 @@ object Reminders {
     private const val CH_DAILY = "daily"
     private const val CH_DUE = "due"
     private const val CH_DUE_ALARM = "due_alarm"
+    private const val CH_SUB = "sub"
 
     fun hasPermission(ctx: Context): Boolean =
         Build.VERSION.SDK_INT < 33 ||
@@ -127,6 +133,9 @@ object Reminders {
         )
         alarm.enableVibration(true)
         nm.createNotificationChannel(alarm)
+        nm.createNotificationChannel(
+            NotificationChannel(CH_SUB, "订阅续费提醒", NotificationManager.IMPORTANCE_HIGH)
+        )
     }
 
     private fun fireIntent(ctx: Context, kind: String): PendingIntent {
@@ -198,6 +207,28 @@ object Reminders {
             }
             if (at != null) setAlarm(ctx, kind, at) else cancel(ctx, kind)
         }
+        val subOn = master && st.getB(K.SUB_ON, true)
+        val sh = st.getI(K.SUB_H, 10)
+        val sm = st.getI(K.SUB_M, 0)
+        for (s in st.loadSubs()) {
+            val kind = "sub:" + s.id
+            if (!subOn || !s.active) {
+                cancel(ctx, kind)
+                continue
+            }
+            val now = LocalDateTime.now()
+            var d = nextBilling(s) ?: continue
+            var at: LocalDateTime? = null
+            for (i in 0 until 3) {
+                val t = d.minusDays(s.remindBefore.toLong()).atTime(sh, sm)
+                if (t.isAfter(now)) {
+                    at = t
+                    break
+                }
+                d = advance(d, s.cycle)
+            }
+            if (at != null) setAlarm(ctx, kind, at) else cancel(ctx, kind)
+        }
     }
 
     private fun openAppIntent(ctx: Context, code: Int, openAdd: Boolean): PendingIntent {
@@ -232,6 +263,11 @@ object Reminders {
         ensureChannels(ctx)
         val st = Store(ctx)
         if (!st.getB(K.REM_ON, false)) return
+        Cur.load(st)
+        if (kind.startsWith("sub:")) {
+            fireSub(ctx, st, kind)
+            return
+        }
         val entries = st.loadEntries()
         val today = LocalDate.now()
         val todayEntries = entries.filter { it.date == today }
@@ -241,8 +277,8 @@ object Reminders {
             if (s.isRecord && s.key != "night" && st.getB(K.SKIP_IF_RECORDED, true) && todayEntries.isNotEmpty()) return
             var text = s.messages.random()
             if (s.key == "night") {
-                val inSum = todayEntries.filter { it.amount > 0 }.sumOf { it.amount }
-                val outSum = -todayEntries.filter { it.amount < 0 }.sumOf { it.amount }
+                val inSum = todayEntries.filter { it.amount > 0 }.sumOf { it.base }
+                val outSum = -todayEntries.filter { it.amount < 0 }.sumOf { it.base }
                 text = if (todayEntries.isEmpty()) {
                     "晚安 🌙 今天还没有记账，花一分钟记一下吧"
                 } else {
@@ -255,7 +291,7 @@ object Reminders {
             val id = kind.removePrefix("due:").toLongOrNull() ?: return
             val g = st.loadGoals().firstOrNull { it.id == id } ?: return
             val due = nextDueDate(g) ?: return
-            val stat = calcGoal(g, entries, entries.sumOf { it.amount })
+            val stat = calcGoal(g, entries, entries.sumOf { it.base })
             if (stat.remaining <= 0.0) return
             val days = ChronoUnit.DAYS.between(today, due)
             val word = if (g.debt) "还款" else "存款"
@@ -271,6 +307,48 @@ object Reminders {
             val alarmStyle = st.getI(K.DUE_STYLE, 0) == 1
             notify(ctx, kind.hashCode(), if (alarmStyle) CH_DUE_ALARM else CH_DUE, "💳 ${g.name} ${word}提醒", text, true, alarmStyle)
         }
+    }
+
+    private fun fireSub(ctx: Context, st: Store, kind: String) {
+        if (!st.getB(K.SUB_ON, true)) return
+        val id = kind.removePrefix("sub:").toLongOrNull() ?: return
+        val s = st.loadSubs().firstOrNull { it.id == id && it.active } ?: return
+        val d = nextBilling(s) ?: return
+        val days = ChronoUnit.DAYS.between(LocalDate.now(), d)
+        val whenTxt = if (days <= 0L) "今天" else "$days 天后（${d.monthValue}月${d.dayOfMonth}日）"
+        val text = if (s.wantCancel) {
+            "✂️ ${s.name} $whenTxt 会自动续费 ${moneyC(s.amount, s.currency)}。你标记了想取消，记得在扣款前去取消！"
+        } else {
+            "${s.name} $whenTxt 会扣款 ${moneyC(s.amount, s.currency)}（${CYCLE_NAMES.getOrElse(s.cycle) { "每月" }}）。还在用吗？不用的话可以先取消。"
+        }
+        val alarmStyle = st.getI(K.SUB_STYLE, 0) == 1
+        notify(ctx, kind.hashCode(), if (alarmStyle) CH_DUE_ALARM else CH_SUB, "🔁 订阅续费提醒：${s.name}", text, false, alarmStyle)
+    }
+
+    fun addSubToCalendar(ctx: Context, s: Sub, h: Int, m: Int): Boolean = try {
+        val d = nextBilling(s) ?: LocalDate.now()
+        val start = d.atTime(h, m).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val rule = when (s.cycle) {
+            1 -> "FREQ=YEARLY"
+            2 -> "FREQ=WEEKLY"
+            else -> "FREQ=MONTHLY"
+        }
+        val i = Intent(Intent.ACTION_INSERT)
+            .setData(CalendarContract.Events.CONTENT_URI)
+            .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, start)
+            .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, start + 30 * 60 * 1000)
+            .putExtra(CalendarContract.Events.TITLE, "🔁 ${s.name} 续费 ${moneyC(s.amount, s.currency)}")
+            .putExtra(
+                CalendarContract.Events.DESCRIPTION,
+                if (s.wantCancel) "存钱记录：记得在扣款前取消 ${s.name}" else "存钱记录：${s.name} 自动续费",
+            )
+            .putExtra(CalendarContract.Events.RRULE, rule)
+            .putExtra(CalendarContract.Events.HAS_ALARM, 1)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ctx.startActivity(i)
+        true
+    } catch (e: Exception) {
+        false
     }
 
     fun test(ctx: Context) {

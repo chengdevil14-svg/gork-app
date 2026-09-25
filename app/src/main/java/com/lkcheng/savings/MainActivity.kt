@@ -116,6 +116,7 @@ class MainActivity : ComponentActivity() {
         }
         enableEdgeToEdge()
         val store = Store(applicationContext)
+        Cur.load(store)
         val openAdd = intent?.getBooleanExtra("open_add", false) == true
         try {
             Reminders.scheduleAll(applicationContext)
@@ -227,6 +228,9 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
     val entries = remember { mutableStateListOf<Entry>().apply { addAll(store.loadEntries()) } }
     val goals = remember { mutableStateListOf<Goal>().apply { addAll(store.loadGoals()) } }
     var editingGoal by remember { mutableStateOf<Goal?>(null) }
+    val subs = remember { mutableStateListOf<Sub>().apply { addAll(store.loadSubs()) } }
+    var editingSub by remember { mutableStateOf<Sub?>(null) }
+    var newSub by remember { mutableStateOf(false) }
     var newGoal by remember { mutableStateOf(false) }
     var greenIncome by remember { mutableStateOf(store.greenForIncome) }
     var syncUrl by remember { mutableStateOf(store.syncUrl) }
@@ -248,6 +252,21 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
 
     fun persist() = store.saveEntries(entries.toList())
     fun persistGoals() = store.saveGoals(goals.toList())
+    fun persistSubs() = store.saveSubs(subs.toList())
+
+    /** Roll subscription dates forward and auto-record charges that are due. */
+    fun runSubs() {
+        val (ns, ne) = processSubs(subs.toList())
+        if (ns != subs.toList()) {
+            subs.clear()
+            subs.addAll(ns)
+            persistSubs()
+        }
+        if (ne.isNotEmpty()) {
+            entries.addAll(ne)
+            persist()
+        }
+    }
 
     fun syncNow() {
         val url = syncUrl
@@ -270,8 +289,11 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
                         persist()
                     }
                 }
-                val snapshot = goals.toList().map { g -> g to calcGoal(g, entries.toList(), entries.sumOf { it.amount }) }
-                withContext(Dispatchers.IO) { Sync.goals(url, snapshot, prefs.emailOn.value) }
+                val snapshot = goals.toList().map { g -> g to calcGoal(g, entries.toList(), entries.sumOf { it.base }) }
+                val subsSnap = subs.toList()
+                withContext(Dispatchers.IO) {
+                    Sync.goals(url, snapshot, prefs.emailOn.value, subsSnap, prefs.subEmail.value)
+                }
             } catch (ex: Exception) {
                 err = ex.message ?: ex.toString()
             }
@@ -282,7 +304,10 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
         }
     }
 
-    LaunchedEffect(Unit) { syncNow() }
+    LaunchedEffect(Unit) {
+        runSubs()
+        syncNow()
+    }
 
     fun goToMonth(m: YearMonth) {
         monthStr = m.toString()
@@ -290,13 +315,13 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
         selStr = (if (YearMonth.from(now) == m) now else m.atDay(1)).toString()
     }
 
-    val total = entries.sumOf { it.amount }
+    val total = entries.sumOf { it.base }
     val monthEntries = entries.filter { YearMonth.from(it.date) == month }
-    val monthIn = monthEntries.filter { it.amount > 0 }.sumOf { it.amount }
-    val monthOut = -monthEntries.filter { it.amount < 0 }.sumOf { it.amount }
-    val daily = monthEntries.groupBy { it.date }.mapValues { (_, v) -> v.sumOf { it.amount } }
+    val monthIn = monthEntries.filter { it.amount > 0 }.sumOf { it.base }
+    val monthOut = -monthEntries.filter { it.amount < 0 }.sumOf { it.base }
+    val daily = monthEntries.groupBy { it.date }.mapValues { (_, v) -> v.sumOf { it.base } }
     val dayEntries = entries.filter { it.date == selected }.sortedByDescending { it.id }
-    val dayNet = dayEntries.sumOf { it.amount }
+    val dayNet = dayEntries.sumOf { it.base }
     val unsynced = entries.count { !it.synced } + store.pendingDeletes().size
 
     if (showSettings) {
@@ -327,6 +352,12 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
             prefs = prefs,
             entries = entries.toList(),
             goals = goals.toList(),
+            subs = subs.toList(),
+            onEditSub = { x -> editingSub = x },
+            onCurrency = { code ->
+                store.currency = code
+                Cur.set(code)
+            },
             onEditGoal = { g -> editingGoal = g },
             onClearAll = {
                 entries.forEach { Photos.delete(context, it.photo) }
@@ -475,14 +506,69 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, onThemeChange: (Int) 
             items(goals.toList(), key = { "g" + it.id }) { g ->
                 GoalCard(g, calcGoal(g, allEntries, total), inc, exp) { editingGoal = g }
             }
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "订阅支出",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { newSub = true }) { Text("＋ 新增") }
+                }
+            }
+            item { SubsSummary(subs.toList(), exp) { newSub = true } }
+            val sortedSubs = subs.toList().sortedWith(
+                compareBy<Sub>({ !it.active }, { nextBilling(it) ?: java.time.LocalDate.MAX })
+            )
+            items(sortedSubs, key = { "s" + it.id }) { s ->
+                SubRow(s, exp) { editingSub = s }
+            }
         }
     }
+    }
+
+    if (newSub || editingSub != null) {
+        SubDialog(
+            initial = editingSub,
+            exp = exp,
+            remindH = prefs.subH.value,
+            remindM = prefs.subM.value,
+            onDismiss = {
+                newSub = false
+                editingSub = null
+            },
+            onSave = { x ->
+                val i = subs.indexOfFirst { it.id == x.id }
+                if (i >= 0) subs[i] = x else subs.add(x)
+                persistSubs()
+                runSubs()
+                newSub = false
+                editingSub = null
+                Reminders.scheduleAll(context)
+                syncNow()
+            },
+            onDelete = { x ->
+                subs.removeAll { it.id == x.id }
+                persistSubs()
+                newSub = false
+                editingSub = null
+                Reminders.scheduleAll(context)
+                syncNow()
+            },
+        )
     }
 
     if (showWelcome) {
         WelcomeDialog(
             entries = entries.toList(),
             goals = goals.toList(),
+            subs = subs.toList(),
             onAdd = {
                 showWelcome = false
                 showAdd = true
@@ -599,7 +685,10 @@ fun SummaryCard(
                 .fillMaxWidth()
                 .padding(20.dp)
         ) {
-            Text("总存款", style = MaterialTheme.typography.labelLarge)
+            Text(
+                "总存款 · 结算货币：" + (CURRENCIES.firstOrNull { it.first == Cur.code }?.third ?: Cur.code),
+                style = MaterialTheme.typography.labelLarge,
+            )
             Text(
                 (if (total < 0) "-" else "") + money(total),
                 fontSize = 34.sp,
@@ -824,7 +913,16 @@ fun EntryRow(e: Entry, inc: Color, exp: Color, showSync: Boolean, goalName: Stri
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Text(signedMoney(e.amount), color = color, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            Column(horizontalAlignment = Alignment.End) {
+                Text(signedMoneyC(e.amount, e.currency), color = color, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                if (e.currency != Cur.code) {
+                    Text(
+                        "≈ " + signedMoney(e.base),
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
 }
@@ -891,6 +989,7 @@ fun EntryDialog(
 ) {
     val context = LocalContext.current
     var tag by remember { mutableStateOf(initial?.tag ?: "") }
+    var cur by remember { mutableStateOf(initial?.currency ?: Cur.code) }
     var goalId by remember { mutableLongStateOf(initial?.goalId ?: 0L) }
     var isIn by remember { mutableStateOf(initial?.let { it.amount >= 0 } ?: true) }
     var amountText by remember { mutableStateOf(initial?.let { plainNumber(kotlin.math.abs(it.amount)) } ?: "") }
@@ -936,12 +1035,25 @@ fun EntryDialog(
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { s -> amountText = s.filter { it.isDigit() || it == '.' } },
-                    label = { Text("金额") },
-                    prefix = { Text("$") },
+                    label = { Text("金额（${symbolOf(cur)}）") },
+                    prefix = { Text(symbolOf(cur)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    for (c in CURRENCIES) {
+                        FilterChip(
+                            selected = cur == c.first,
+                            onClick = { cur = c.first },
+                            label = { Text(c.second, fontSize = 13.sp) },
+                        )
+                    }
+                    val a0 = amountText.toDoubleOrNull()
+                    if (cur != Cur.code && a0 != null) {
+                        Text("≈ " + money(Fx.toBase(a0, cur)), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (q in listOf(10, 50, 100, 500)) {
                         OutlinedButton(
@@ -1060,6 +1172,7 @@ fun EntryDialog(
                                 photoSent = samePhoto && initial?.photoSent == true,
                                 tag = tag.trim(),
                                 goalId = goalId,
+                                currency = cur,
                             )
                         )
                     }

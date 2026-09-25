@@ -101,6 +101,11 @@ class AppPrefs(store: Store) {
     val dueStyle = IntPref(store, K.DUE_STYLE, 0)
     val emailOn = BoolPref(store, K.EMAIL_ON, false)
     val popupOn = BoolPref(store, K.POPUP_ON, true)
+    val subOn = BoolPref(store, K.SUB_ON, true)
+    val subH = IntPref(store, K.SUB_H, 10)
+    val subM = IntPref(store, K.SUB_M, 0)
+    val subStyle = IntPref(store, K.SUB_STYLE, 0)
+    val subEmail = BoolPref(store, K.SUB_EMAIL, false)
     val slotOn = SLOTS.associate { it.key to BoolPref(store, K.slotOn(it.key), true) }
     val slotH = SLOTS.associate { it.key to IntPref(store, K.slotH(it.key), it.h) }
     val slotM = SLOTS.associate { it.key to IntPref(store, K.slotM(it.key), it.m) }
@@ -125,6 +130,9 @@ fun SettingsScreen(
     prefs: AppPrefs,
     entries: List<Entry>,
     goals: List<Goal>,
+    subs: List<Sub>,
+    onEditSub: (Sub) -> Unit,
+    onCurrency: (String) -> Unit,
     onEditGoal: (Goal) -> Unit,
     onClearAll: () -> Unit,
     onClose: () -> Unit,
@@ -135,6 +143,7 @@ fun SettingsScreen(
         "" to "设置",
         "theme" to "主题",
         "color" to "颜色",
+        "currency" to "货币",
         "remind" to "提醒与通知",
         "popup" to "打开 app 时提醒",
         "sync" to "Google Sheet 同步",
@@ -166,10 +175,15 @@ fun SettingsScreen(
                         MenuItem("🎨", "主题", THEME_NAMES[theme]) { page = "theme" }
                         HorizontalDivider()
                         MenuItem("🟢", "颜色", if (greenIncome) "存入绿 · 取出红" else "存入红 · 取出绿") { page = "color" }
+                        HorizontalDivider()
+                        MenuItem(
+                            "💱", "货币",
+                            "结算：" + (CURRENCIES.firstOrNull { it.first == Cur.code }?.third ?: Cur.code),
+                        ) { page = "currency" }
                     }
                     Spacer(Modifier.height(12.dp))
                     Card(shape = RoundedCornerShape(16.dp)) {
-                        MenuItem("🔔", "提醒与通知", "问候、饭点记账、还款日 · $remTxt") { page = "remind" }
+                        MenuItem("🔔", "提醒与通知", "问候、饭点记账、还款日、订阅续费 · $remTxt") { page = "remind" }
                         HorizontalDivider()
                         MenuItem("📋", "打开 app 时提醒", if (prefs.popupOn.value) "已开启" else "已关闭") { page = "popup" }
                     }
@@ -189,7 +203,8 @@ fun SettingsScreen(
                 }
                 "theme" -> Column { ThemePage(theme, onTheme) }
                 "color" -> Column { ColorPage(greenIncome, onGreen) }
-                "remind" -> Column { RemindPage(prefs, goals, syncUrl, onEditGoal) }
+                "currency" -> Column { CurrencyPage(onCurrency) }
+                "remind" -> Column { RemindPage(prefs, goals, subs, syncUrl, onEditGoal, onEditSub) }
                 "popup" -> Column { PopupPage(prefs) }
                 "sync" -> Column { SyncPage(syncUrl, sheetUrl, onSyncUrl, onSheetFound) }
                 "data" -> Column { DataPage(entries, onClearAll) }
@@ -339,7 +354,14 @@ fun ColorPair(a: Color, b: Color) {
 }
 
 @Composable
-fun RemindPage(prefs: AppPrefs, goals: List<Goal>, syncUrl: String, onEditGoal: (Goal) -> Unit) {
+fun RemindPage(
+    prefs: AppPrefs,
+    goals: List<Goal>,
+    subs: List<Sub>,
+    syncUrl: String,
+    onEditGoal: (Goal) -> Unit,
+    onEditSub: (Sub) -> Unit,
+) {
     val ctx = LocalContext.current
     var permOk by remember { mutableStateOf(Reminders.hasPermission(ctx)) }
     var toast by remember { mutableStateOf("") }
@@ -515,6 +537,78 @@ fun RemindPage(prefs: AppPrefs, goals: List<Goal>, syncUrl: String, onEditGoal: 
             }
         }
 
+        SectionTitle("订阅续费提醒")
+        Card(shape = RoundedCornerShape(16.dp)) {
+            SwitchRow("开启订阅续费提醒", "扣款前提醒你，想取消的会提醒你去取消", prefs.subOn.value, enabled = master) {
+                prefs.subOn.value = it
+                resched()
+            }
+            HorizontalDivider()
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        pickTime(ctx, prefs.subH.value, prefs.subM.value) { hh, mm ->
+                            prefs.subH.value = hh
+                            prefs.subM.value = mm
+                            resched()
+                        }
+                    }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("提醒时间", modifier = Modifier.weight(1f))
+                Text("⏰ " + hm(prefs.subH.value, prefs.subM.value), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            }
+            HorizontalDivider()
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text("提醒方式")
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = prefs.subStyle.value == 0, onClick = { prefs.subStyle.value = 0 }, label = { Text("🔔 通知") })
+                    FilterChip(selected = prefs.subStyle.value == 1, onClick = { prefs.subStyle.value = 1 }, label = { Text("⏰ 闹钟式响铃") })
+                }
+            }
+            HorizontalDivider()
+            SwitchRow(
+                "同时发 Email 提醒",
+                if (syncUrl.isBlank()) "需要先连接 Google Sheet 同步" else "由你的 Google 脚本每天 9 点检查，发到你的 Gmail",
+                prefs.subEmail.value && syncUrl.isNotBlank(),
+                enabled = syncUrl.isNotBlank(),
+            ) { prefs.subEmail.value = it }
+        }
+        val activeSubs = subs.filter { it.active }
+        if (activeSubs.isEmpty()) {
+            Text("还没有订阅。到主页「订阅支出」新增。", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            Card(shape = RoundedCornerShape(16.dp)) {
+                for ((i, x) in activeSubs.withIndex()) {
+                    if (i > 0) HorizontalDivider()
+                    val next = nextBilling(x)
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(x.name + if (x.wantCancel) " ✂️" else "", fontWeight = FontWeight.Medium)
+                            Text(
+                                (if (next != null) "下次 ${dateCn(next)} · " else "") +
+                                    if (x.remindBefore > 0) "提前 ${x.remindBefore} 天提醒" else "当天提醒",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        TextButton(onClick = {
+                            if (!Reminders.addSubToCalendar(ctx, x, prefs.subH.value, prefs.subM.value)) toast = "没找到日历 app"
+                        }) { Text("📅", fontSize = 16.sp) }
+                        TextButton(onClick = { onEditSub(x) }) { Text("修改", fontSize = 13.sp) }
+                    }
+                }
+            }
+        }
+
         SectionTitle("其他")
         OutlinedButton(
             onClick = {
@@ -536,6 +630,92 @@ fun RemindPage(prefs: AppPrefs, goals: List<Goal>, syncUrl: String, onEditGoal: 
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+@Composable
+fun CurrencyPage(onCurrency: (String) -> Unit) {
+    val ctx = LocalContext.current
+    val store = remember { Store(ctx) }
+    val scope = rememberCoroutineScope()
+    var msg by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("结算货币")
+        Card(shape = RoundedCornerShape(16.dp)) {
+            for ((i, c) in CURRENCIES.withIndex()) {
+                if (i > 0) HorizontalDivider()
+                OptionRow(
+                    c.third, "符号 ${c.second}", Cur.code == c.first,
+                    leading = { Text(c.second, fontWeight = FontWeight.Bold, modifier = Modifier.width(52.dp)) },
+                ) { onCurrency(c.first) }
+            }
+        }
+        Text(
+            "总存款、每月统计、目标和欠款进度都按结算货币计算。每笔记录可以用不同货币记，会按下面的汇率自动换算。",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        SectionTitle("汇率（1 外币 = 多少 ${Cur.code}）")
+        Card(shape = RoundedCornerShape(16.dp)) {
+            val others = CURRENCIES.filter { it.first != Cur.code }
+            for ((i, c) in others.withIndex()) {
+                if (i > 0) HorizontalDivider()
+                var text by remember(Cur.code, c.first, Fx.updatedAt) {
+                    mutableStateOf(String.format(Locale.US, "%.4f", Fx.perBase(c.first)).trimEnd('0').trimEnd('.'))
+                }
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("1 ${c.first} =", modifier = Modifier.width(80.dp))
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { v ->
+                            text = v.filter { it.isDigit() || it == '.' }
+                            text.toDoubleOrNull()?.let { if (it > 0) Fx.setPerBase(store, c.first, it) }
+                        },
+                        singleLine = true,
+                        suffix = { Text(Cur.code) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+        OutlinedButton(
+            enabled = !loading,
+            onClick = {
+                loading = true
+                msg = "更新中…"
+                scope.launch {
+                    msg = try {
+                        val (myr, usd) = withContext(Dispatchers.IO) { fetchRates() }
+                        val time = java.time.LocalDateTime.now().withSecond(0).withNano(0).toString().replace('T', ' ')
+                        Fx.saveSgdRates(store, myr, usd, time)
+                        "✅ 已更新（$time）"
+                    } catch (e: Exception) {
+                        "❌ 更新失败，请检查网络，或手动填写汇率"
+                    }
+                    loading = false
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("🌐 在线更新汇率") }
+        if (msg.isNotEmpty()) Text(msg, fontSize = 13.sp)
+        if (Fx.updatedAt.isNotEmpty()) {
+            Text("上次更新：${Fx.updatedAt}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** Returns (SGD per 1 MYR, SGD per 1 USD). */
+fun fetchRates(): Pair<Double, Double> {
+    val conn = java.net.URL("https://open.er-api.com/v6/latest/SGD").openConnection() as java.net.HttpURLConnection
+    conn.connectTimeout = 15000
+    conn.readTimeout = 15000
+    val text = conn.inputStream.bufferedReader().use { it.readText() }
+    conn.disconnect()
+    val rates = org.json.JSONObject(text).getJSONObject("rates")
+    val myrPerSgd = rates.getDouble("MYR")
+    val usdPerSgd = rates.getDouble("USD")
+    return (1.0 / myrPerSgd) to (1.0 / usdPerSgd)
 }
 
 @Composable
@@ -625,11 +805,13 @@ fun DataPage(entries: List<Entry>, onClearAll: () -> Unit) {
         OutlinedButton(
             onClick = {
                 val csv = buildString {
-                    append("日期,类型,金额,分类,备注\n")
+                    append("日期,类型,金额,货币,结算金额(${Cur.code}),分类,备注\n")
                     for (e in entries.sortedWith(compareBy({ it.date }, { it.id }))) {
                         append(e.date.toString()).append(',')
                         append(if (e.amount >= 0) "存入" else "取出").append(',')
                         append(plainNumber(kotlin.math.abs(e.amount))).append(',')
+                        append(e.currency).append(',')
+                        append(String.format(java.util.Locale.US, "%.2f", kotlin.math.abs(e.base))).append(',')
                         append(e.tag.replace(",", "，")).append(',')
                         append(e.note.replace(",", "，").replace("\n", " ")).append('\n')
                     }
@@ -661,10 +843,10 @@ fun DataPage(entries: List<Entry>, onClearAll: () -> Unit) {
 
 /** Popup shown when the app opens. */
 @Composable
-fun WelcomeDialog(entries: List<Entry>, goals: List<Goal>, onAdd: () -> Unit, onDismiss: () -> Unit) {
+fun WelcomeDialog(entries: List<Entry>, goals: List<Goal>, subs: List<Sub>, onAdd: () -> Unit, onDismiss: () -> Unit) {
     val today = java.time.LocalDate.now()
     val todayEntries = entries.filter { it.date == today }
-    val total = entries.sumOf { it.amount }
+    val total = entries.sumOf { it.base }
     val upcoming = goals.mapNotNull { g ->
         val d = nextDueDate(g) ?: return@mapNotNull null
         val days = java.time.temporal.ChronoUnit.DAYS.between(today, d)
@@ -682,8 +864,8 @@ fun WelcomeDialog(entries: List<Entry>, goals: List<Goal>, onAdd: () -> Unit, on
                 if (todayEntries.isEmpty()) {
                     Text("今天还没有记账 ✏️")
                 } else {
-                    val inSum = todayEntries.filter { it.amount > 0 }.sumOf { it.amount }
-                    val outSum = -todayEntries.filter { it.amount < 0 }.sumOf { it.amount }
+                    val inSum = todayEntries.filter { it.amount > 0 }.sumOf { it.base }
+                    val outSum = -todayEntries.filter { it.amount < 0 }.sumOf { it.base }
                     Text("今天记了 ${todayEntries.size} 笔：存入 ${money(inSum)} · 取出 ${money(outSum)}")
                 }
                 Text("总存款 ${(if (total < 0) "-" else "") + money(total)}", fontWeight = FontWeight.Bold)
@@ -697,6 +879,22 @@ fun WelcomeDialog(entries: List<Entry>, goals: List<Goal>, onAdd: () -> Unit, on
                             else -> "$days 天后"
                         }
                         Text("· ${g.name}：${d.monthValue}月${d.dayOfMonth}日（$w）", fontSize = 14.sp)
+                    }
+                }
+                val renewals = subs.filter { it.active }.mapNotNull { x ->
+                    val d = nextBilling(x) ?: return@mapNotNull null
+                    val days = java.time.temporal.ChronoUnit.DAYS.between(today, d)
+                    if (days <= 7) Triple(x, d, days) else null
+                }.sortedBy { it.third }
+                if (renewals.isNotEmpty()) {
+                    HorizontalDivider()
+                    Text("🔁 7 天内续费的订阅", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    for ((x, d, days) in renewals) {
+                        Text(
+                            "· ${x.name} ${moneyC(x.amount, x.currency)}：${dateCn(d)}（${daysWord(days)}）" +
+                                if (x.wantCancel) " ✂️ 记得取消" else "",
+                            fontSize = 14.sp,
+                        )
                     }
                 }
                 if (plans.isNotEmpty()) {

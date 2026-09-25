@@ -68,7 +68,7 @@ fun parseYm(s: String): YearMonth? = try {
 fun ymCn(ym: YearMonth) = "${ym.year}年${ym.monthValue}月"
 
 /** How much an entry counts toward a goal: payments (取出) count for debts, deposits for savings. */
-fun contribution(g: Goal, e: Entry) = if (g.debt) -e.amount else e.amount
+fun contribution(g: Goal, e: Entry) = if (g.debt) -e.base else e.base
 
 fun calcGoal(g: Goal, entries: List<Entry>, total: Double, now: YearMonth = YearMonth.now()): GoalStat {
     val linked = entries.filter { it.goalId == g.id }
@@ -77,7 +77,7 @@ fun calcGoal(g: Goal, entries: List<Entry>, total: Double, now: YearMonth = Year
     val remaining = max(0.0, g.target - done)
     val pct = if (g.target > 0) (done / g.target).coerceIn(0.0, 1.0) else 0.0
     val thisMonth = if (byTotal) {
-        entries.filter { YearMonth.from(it.date) == now }.sumOf { it.amount }
+        entries.filter { YearMonth.from(it.date) == now }.sumOf { it.base }
     } else {
         linked.filter { YearMonth.from(it.date) == now }.sumOf { contribution(g, it) }
     }
@@ -215,7 +215,7 @@ fun MoneyField(value: String, onChange: (String) -> Unit, label: String) {
         value = value,
         onValueChange = { s -> onChange(s.filter { it.isDigit() || it == '.' }) },
         label = { Text(label) },
-        prefix = { Text("$") },
+        prefix = { Text(Cur.symbol) },
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         modifier = Modifier.fillMaxWidth(),

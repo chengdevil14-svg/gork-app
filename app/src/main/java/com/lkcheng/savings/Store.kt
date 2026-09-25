@@ -1,6 +1,7 @@
 package com.lkcheng.savings
 
 import android.content.Context
+import androidx.compose.runtime.mutableStateOf
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
@@ -18,6 +19,7 @@ data class Entry(
     val photoSent: Boolean = false,
     val tag: String = "",
     val goalId: Long = 0L,
+    val currency: String = "SGD",
 )
 
 data class Goal(
@@ -31,6 +33,20 @@ data class Goal(
     val useTotal: Boolean = false, // 存款目标: 用总存款计算进度
     val dueDay: Int = 0, // 每月还款/存款日 1-31, 0 = 不提醒
     val remindBefore: Int = 0, // 提前几天提醒
+)
+
+data class Sub(
+    val id: Long,
+    val name: String,
+    val amount: Double,
+    val cycle: Int = 0, // 0 每月, 1 每年, 2 每周
+    val nextDate: String, // yyyy-MM-dd 下次扣款日（会自动往后滚）
+    val remindBefore: Int = 1,
+    val wantCancel: Boolean = false,
+    val autoRecord: Boolean = false,
+    val active: Boolean = true,
+    val recordedUntil: String = "",
+    val currency: String = "SGD",
 )
 
 class Store(context: Context) {
@@ -57,6 +73,7 @@ class Store(context: Context) {
                         photoSent = o.optBoolean("photoSent", false),
                         tag = o.optString("tag", ""),
                         goalId = o.optLong("goalId", 0L),
+                        currency = o.optString("currency", "SGD").ifBlank { "SGD" },
                     )
                 )
             } catch (e: Exception) {
@@ -80,6 +97,7 @@ class Store(context: Context) {
                     .put("photoSent", e.photoSent)
                     .put("tag", e.tag)
                     .put("goalId", e.goalId)
+                    .put("currency", e.currency)
             )
         }
         sp.edit().putString("entries", arr.toString()).apply()
@@ -142,9 +160,64 @@ class Store(context: Context) {
         sp.edit().putString("goals", arr.toString()).apply()
     }
 
+    fun loadSubs(): List<Sub> {
+        val arr = try {
+            JSONArray(sp.getString("subs", "[]") ?: "[]")
+        } catch (e: Exception) {
+            JSONArray()
+        }
+        val out = ArrayList<Sub>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            try {
+                out.add(
+                    Sub(
+                        id = o.getLong("id"),
+                        name = o.optString("name", "订阅"),
+                        amount = o.optDouble("amount", 0.0),
+                        cycle = o.optInt("cycle", 0),
+                        nextDate = o.getString("nextDate"),
+                        remindBefore = o.optInt("remindBefore", 1),
+                        wantCancel = o.optBoolean("wantCancel", false),
+                        autoRecord = o.optBoolean("autoRecord", false),
+                        active = o.optBoolean("active", true),
+                        recordedUntil = o.optString("recordedUntil", ""),
+                        currency = o.optString("currency", "SGD").ifBlank { "SGD" },
+                    )
+                )
+            } catch (e: Exception) {
+                // skip
+            }
+        }
+        return out
+    }
+
+    fun saveSubs(list: List<Sub>) {
+        val arr = JSONArray()
+        for (x in list) {
+            arr.put(
+                JSONObject()
+                    .put("id", x.id)
+                    .put("name", x.name)
+                    .put("amount", x.amount)
+                    .put("cycle", x.cycle)
+                    .put("nextDate", x.nextDate)
+                    .put("remindBefore", x.remindBefore)
+                    .put("wantCancel", x.wantCancel)
+                    .put("autoRecord", x.autoRecord)
+                    .put("active", x.active)
+                    .put("recordedUntil", x.recordedUntil)
+                    .put("currency", x.currency)
+            )
+        }
+        sp.edit().putString("subs", arr.toString()).apply()
+    }
+
     fun getB(key: String, def: Boolean) = sp.getBoolean(key, def)
     fun setB(key: String, v: Boolean) = sp.edit().putBoolean(key, v).apply()
     fun getI(key: String, def: Int) = sp.getInt(key, def)
+    fun getS(key: String, def: String) = sp.getString(key, def) ?: def
+    fun setS(key: String, v: String) = sp.edit().putString(key, v).apply()
     fun setI(key: String, v: Int) = sp.edit().putInt(key, v).apply()
 
     var goal: Double
@@ -165,6 +238,12 @@ class Store(context: Context) {
         get() = sp.getInt("theme", 0)
         set(value) {
             sp.edit().putInt("theme", value).apply()
+        }
+
+    var currency: String
+        get() = sp.getString("currency", "SGD") ?: "SGD"
+        set(value) {
+            sp.edit().putString("currency", value).apply()
         }
 
     var syncUrl: String
@@ -199,7 +278,75 @@ class Store(context: Context) {
     fun removePendingDelete(id: Long) = setPendingDeletes(pendingDeletes().filter { it != id })
 }
 
-fun money(v: Double): String = "$" + String.format(Locale.US, "%,.2f", abs(v))
+val CURRENCIES = listOf(
+    Triple("SGD", "S$", "新币 SGD"),
+    Triple("MYR", "RM", "马币 MYR"),
+    Triple("USD", "US$", "美金 USD"),
+)
+
+/** Current currency symbol; backed by Compose state so the UI refreshes when it changes. */
+object Cur {
+    private val st = mutableStateOf("S$")
+    private val codeSt = mutableStateOf("SGD")
+    val symbol: String get() = st.value
+    val code: String get() = codeSt.value
+    fun set(code: String) {
+        val c = CURRENCIES.firstOrNull { it.first == code } ?: CURRENCIES[0]
+        codeSt.value = c.first
+        st.value = c.second
+    }
+    fun load(store: Store) {
+        set(store.currency)
+        Fx.load(store)
+    }
+}
+
+fun symbolOf(code: String) = CURRENCIES.firstOrNull { it.first == code }?.second ?: code
+
+/** Exchange rates, stored as "value of 1 unit in SGD". */
+object Fx {
+    private val rates = mutableStateOf(mapOf("SGD" to 1.0, "MYR" to 0.29, "USD" to 1.29))
+    private val updated = mutableStateOf("")
+    val updatedAt: String get() = updated.value
+    fun sgdPer(code: String): Double = rates.value[code] ?: 1.0
+    fun toBase(amount: Double, from: String): Double {
+        val base = Cur.code
+        if (from == base) return amount
+        return amount * sgdPer(from) / sgdPer(base)
+    }
+    /** "1 USD = 1.29 SGD" style value, relative to the settlement currency. */
+    fun perBase(code: String): Double = sgdPer(code) / sgdPer(Cur.code)
+    fun load(store: Store) {
+        rates.value = mapOf(
+            "SGD" to 1.0,
+            "MYR" to (store.getS("fx_MYR", "0.29").toDoubleOrNull() ?: 0.29),
+            "USD" to (store.getS("fx_USD", "1.29").toDoubleOrNull() ?: 1.29),
+        )
+        updated.value = store.getS("fx_time", "")
+    }
+    /** Sets how many settlement-currency units 1 [code] is worth. */
+    fun setPerBase(store: Store, code: String, perBase: Double) {
+        val sgd = perBase * sgdPer(Cur.code)
+        if (code == "SGD" || sgd <= 0) return
+        store.setS("fx_$code", sgd.toString())
+        load(store)
+    }
+    fun saveSgdRates(store: Store, myr: Double, usd: Double, time: String) {
+        store.setS("fx_MYR", myr.toString())
+        store.setS("fx_USD", usd.toString())
+        store.setS("fx_time", time)
+        load(store)
+    }
+}
+
+/** Amount converted into the settlement currency. */
+val Entry.base: Double get() = Fx.toBase(amount, currency)
+
+fun moneyC(v: Double, code: String): String = symbolOf(code) + String.format(Locale.US, "%,.2f", abs(v))
+
+fun signedMoneyC(v: Double, code: String): String = (if (v < 0) "-" else "+") + moneyC(v, code)
+
+fun money(v: Double): String = Cur.symbol + String.format(Locale.US, "%,.2f", abs(v))
 
 fun signedMoney(v: Double): String = (if (v < 0) "-" else "+") + money(v)
 
