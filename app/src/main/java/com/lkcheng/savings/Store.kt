@@ -279,14 +279,14 @@ class Store(context: Context) {
 }
 
 val CURRENCIES = listOf(
-    Triple("SGD", "S$", "新币 SGD"),
-    Triple("MYR", "RM", "马币 MYR"),
-    Triple("USD", "US$", "美金 USD"),
+    Triple("SGD", "SGD", "新币 SGD"),
+    Triple("MYR", "MYR", "马币 MYR"),
+    Triple("USD", "USD", "美金 USD"),
 )
 
 /** Current currency symbol; backed by Compose state so the UI refreshes when it changes. */
 object Cur {
-    private val st = mutableStateOf("S$")
+    private val st = mutableStateOf("SGD")
     private val codeSt = mutableStateOf("SGD")
     val symbol: String get() = st.value
     val code: String get() = codeSt.value
@@ -342,11 +342,11 @@ object Fx {
 /** Amount converted into the settlement currency. */
 val Entry.base: Double get() = Fx.toBase(amount, currency)
 
-fun moneyC(v: Double, code: String): String = symbolOf(code) + String.format(Locale.US, "%,.2f", abs(v))
+fun moneyC(v: Double, code: String): String = symbolOf(code) + " " + String.format(Locale.US, "%,.2f", abs(v))
 
 fun signedMoneyC(v: Double, code: String): String = (if (v < 0) "-" else "+") + moneyC(v, code)
 
-fun money(v: Double): String = Cur.symbol + String.format(Locale.US, "%,.2f", abs(v))
+fun money(v: Double): String = Cur.symbol + " " + String.format(Locale.US, "%,.2f", abs(v))
 
 fun signedMoney(v: Double): String = (if (v < 0) "-" else "+") + money(v)
 

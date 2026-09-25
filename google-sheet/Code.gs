@@ -9,8 +9,8 @@
 const SHEET_NAME = '记录';
 const HEADERS = ['日期', '进出', '金额', '货币', '结算金额', '分类', '照片', '备注', '目标', '编号'];
 const COL = { date: 1, type: 2, amount: 3, cur: 4, base: 5, tag: 6, photo: 7, note: 8, goal: 9, id: 10 };
-const SYM = { SGD: 'S$', MYR: 'RM', USD: 'US$' };
-const fmt_ = code => { const s = SYM[code] || '$'; return '+"' + s + '"#,##0.00;-"' + s + '"#,##0.00'; };
+const SYM = { SGD: 'SGD ', MYR: 'MYR ', USD: 'USD ' };
+const fmt_ = code => { const s = SYM[code] || ''; return '+"' + s + '"#,##0.00;-"' + s + '"#,##0.00'; };
 const GOAL_SHEET = '目标';
 
 // 第一次先在编辑器里运行这个函数，完成授权并创建表格（也会开启每天 9 点的 Email 还款提醒检查）

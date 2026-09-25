@@ -215,7 +215,7 @@ fun MoneyField(value: String, onChange: (String) -> Unit, label: String) {
         value = value,
         onValueChange = { s -> onChange(s.filter { it.isDigit() || it == '.' }) },
         label = { Text(label) },
-        prefix = { Text(Cur.symbol) },
+        prefix = { Text(Cur.symbol + " ") },
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         modifier = Modifier.fillMaxWidth(),

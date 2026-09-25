@@ -284,14 +284,14 @@ fun SubDialog(
                     value = amountText,
                     onValueChange = { v -> amountText = v.filter { it.isDigit() || it == '.' } },
                     label = { Text("每次扣款金额") },
-                    prefix = { Text(symbolOf(cur)) },
+                    prefix = { Text(symbolOf(cur) + " ") },
                     singleLine = true,
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (c in CURRENCIES) {
-                        FilterChip(selected = cur == c.first, onClick = { cur = c.first }, label = { Text(c.second, fontSize = 13.sp) })
+                        FilterChip(selected = cur == c.first, onClick = { cur = c.first }, label = { Text(c.third, fontSize = 13.sp) })
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

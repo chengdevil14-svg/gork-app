@@ -1035,24 +1035,28 @@ fun EntryDialog(
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { s -> amountText = s.filter { it.isDigit() || it == '.' } },
-                    label = { Text("金额（${symbolOf(cur)}）") },
-                    prefix = { Text(symbolOf(cur)) },
+                    label = { Text("金额（" + (CURRENCIES.firstOrNull { it.first == cur }?.third ?: cur) + "）") },
+                    prefix = { Text(symbolOf(cur) + " ") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (c in CURRENCIES) {
                         FilterChip(
                             selected = cur == c.first,
                             onClick = { cur = c.first },
-                            label = { Text(c.second, fontSize = 13.sp) },
+                            label = { Text(c.third, fontSize = 13.sp) },
                         )
                     }
-                    val a0 = amountText.toDoubleOrNull()
-                    if (cur != Cur.code && a0 != null) {
-                        Text("≈ " + money(Fx.toBase(a0, cur)), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                }
+                val a0 = amountText.toDoubleOrNull()
+                if (cur != Cur.code && a0 != null) {
+                    Text(
+                        "≈ " + money(Fx.toBase(a0, cur)) + "（按结算货币）",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (q in listOf(10, 50, 100, 500)) {

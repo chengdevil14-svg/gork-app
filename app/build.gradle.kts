@@ -44,6 +44,7 @@ android {
     buildFeatures {
         compose = true
     }
+    sourceSets["main"].assets.srcDir("../google-sheet")
     lint {
         checkReleaseBuilds = false
         abortOnError = false

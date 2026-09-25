@@ -645,8 +645,7 @@ fun CurrencyPage(onCurrency: (String) -> Unit) {
             for ((i, c) in CURRENCIES.withIndex()) {
                 if (i > 0) HorizontalDivider()
                 OptionRow(
-                    c.third, "符号 ${c.second}", Cur.code == c.first,
-                    leading = { Text(c.second, fontWeight = FontWeight.Bold, modifier = Modifier.width(52.dp)) },
+                    c.third, "金额显示为：" + c.second + " 1,234.00", Cur.code == c.first,
                 ) { onCurrency(c.first) }
             }
         }
@@ -739,7 +738,58 @@ fun SyncPage(syncUrl: String, sheetUrl: String, onSyncUrl: (String) -> Unit, onS
     var sheet by remember { mutableStateOf(sheetUrl) }
     var msg by remember { mutableStateOf("") }
     var testing by remember { mutableStateOf(false) }
+    var copied by remember { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (syncUrl.isBlank()) {
+            Card(shape = RoundedCornerShape(16.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("第一次设置（约 3 分钟，只做一次）", fontWeight = FontWeight.Bold)
+                    GuideStep("1", "复制脚本代码") {
+                        OutlinedButton(onClick = {
+                            val code = try {
+                                ctx.assets.open("Code.gs").bufferedReader().use { it.readText() }
+                            } catch (e: Exception) {
+                                ""
+                            }
+                            val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
+                            if (code.isNotEmpty() && cm != null) {
+                                cm.setPrimaryClip(android.content.ClipData.newPlainText("Code.gs", code))
+                                copied = "✅ 已复制（${code.length} 字）"
+                            } else {
+                                copied = "❌ 复制失败"
+                            }
+                        }) { Text("📋 复制脚本代码") }
+                        if (copied.isNotEmpty()) Text(copied, fontSize = 12.sp)
+                    }
+                    GuideStep("2", "打开 Google 脚本，新建项目") {
+                        OutlinedButton(onClick = { openUrl(ctx, "https://script.google.com/home/projects/create") }) {
+                            Text("🌐 打开 script.google.com")
+                        }
+                        Text(
+                            "用你的 Google 账号登录。手机上建议在 Chrome 里点右上角「⋮ → 桌面版网站」。",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    GuideStep("3", "全选删掉原来的代码，粘贴，保存 💾") {}
+                    GuideStep("4", "上方函数选「setup」，点「运行」") {
+                        Text(
+                            "会要求授权：选你的账号 →「高级」→「前往（不安全）」→「允许」。这是你自己的脚本，只能访问你自己的表格。运行完会自动建好「存钱记录」表格。",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    GuideStep("5", "部署 → 新建部署 → 类型选「Web 应用」") {
+                        Text(
+                            "执行身份：我　·　谁可以访问：任何人\n点「部署」，复制出现的网址（https://script.google.com/macros/s/…/exec）。",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    GuideStep("6", "把网址贴到下面，点「连接并保存」") {}
+                }
+            }
+        }
         OutlinedTextField(
             value = url,
             onValueChange = { url = it.trim(); msg = "" },
@@ -790,10 +840,31 @@ fun SyncPage(syncUrl: String, sheetUrl: String, onSyncUrl: (String) -> Unit, onS
             }) { Text("断开同步", color = MaterialTheme.colorScheme.error) }
         }
         Text(
-            "表格列：日期 | 进出 | 金额 | 分类 | 照片 | 备注 | 目标。照片直接显示在格子里。另有「目标」页显示每个目标的进度。\n\n设置方法见 GitHub 仓库里的 google-sheet/Code.gs 说明。",
+            "表格列：日期 | 进出 | 金额 | 货币 | 结算金额 | 分类 | 照片 | 备注 | 目标。照片直接显示在格子里。另有「目标」「订阅」两页。\n\n以后 app 更新了脚本：重新复制代码贴上 → 部署 → 管理部署 → 编辑 → 版本选「新版本」→ 部署，网址不变。",
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+fun GuideStep(num: String, title: String, content: @Composable () -> Unit) {
+    Row {
+        Text(
+            num,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            fontSize = 13.sp,
+            modifier = Modifier
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary)
+                .padding(horizontal = 8.dp, vertical = 2.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, fontWeight = FontWeight.Medium)
+            content()
+        }
     }
 }
 
