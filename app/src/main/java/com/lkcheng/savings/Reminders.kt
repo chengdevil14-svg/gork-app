@@ -302,7 +302,7 @@ object Reminders {
                     "晚安 🌙 今天记了 ${todayEntries.size} 笔：存入 ${money(inSum)}，取出 ${money(outSum)}"
                 }
             }
-            notify(ctx, kind.hashCode(), CH_DAILY, "存钱记录", text, s.isRecord, false)
+            notify(ctx, kind.hashCode(), CH_DAILY, "成长账本", text, s.isRecord, false)
         } else if (kind.startsWith("due:")) {
             if (!st.getB(K.DUE_ON, true)) return
             val id = kind.removePrefix("due:").toLongOrNull() ?: return
@@ -361,7 +361,7 @@ object Reminders {
             .putExtra(CalendarContract.Events.TITLE, "🔁 ${s.name} 续费 ${moneyC(s.amount, s.currency)}")
             .putExtra(
                 CalendarContract.Events.DESCRIPTION,
-                if (s.wantCancel) "存钱记录：记得在扣款前取消 ${s.name}" else "存钱记录：${s.name} 自动续费",
+                if (s.wantCancel) "成长账本：记得在扣款前取消 ${s.name}" else "成长账本：${s.name} 自动续费",
             )
             .putExtra(CalendarContract.Events.RRULE, rule)
             .putExtra(CalendarContract.Events.HAS_ALARM, 1)
@@ -374,7 +374,7 @@ object Reminders {
 
     fun test(ctx: Context) {
         ensureChannels(ctx)
-        notify(ctx, 777, CH_DAILY, "存钱记录", "测试通知 ✅ 提醒可以正常显示", true, false)
+        notify(ctx, 777, CH_DAILY, "成长账本", "测试通知 ✅ 提醒可以正常显示", true, false)
     }
 
     /** Opens the phone's clock app with a daily alarm pre-filled. */
@@ -404,7 +404,7 @@ object Reminders {
         val start = due.atTime(h, m).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val word = if (g.debt) "还款日" else "存款日"
         val desc = buildString {
-            append("存钱记录：${g.name} 每月 ${g.dueDay} 号$word")
+            append("成长账本：${g.name} 每月 ${g.dueDay} 号$word")
             if (g.monthly > 0) append("，计划${if (g.debt) "还" else "存"} ${money(g.monthly)}")
         }
         val i = Intent(Intent.ACTION_INSERT)

@@ -182,8 +182,34 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-val THEME_NAMES = listOf("白蓝", "深夜", "暖金")
-val THEME_SWATCH = listOf(Color(0xFF6610F2), Color(0xFF1F2937), Color(0xFFD97706))
+val THEME_NAMES = listOf("冰蓝", "深夜", "海蓝", "绿叶", "樱花粉", "紫粉")
+val THEME_SWATCH = listOf(
+    Color(0xFF5AA9E6), Color(0xFF1F2937), Color(0xFF1D4ED8),
+    Color(0xFF2E9D5B), Color(0xFFE75A8B), Color(0xFFA855F7),
+)
+val THEME_DESC = listOf(
+    "冰蓝天空色，像 iPhone 天空蓝，清爽透亮",
+    "深色背景，晚上看不刺眼",
+    "经典海蓝，稳重清晰",
+    "小绿叶，清新自然",
+    "樱花粉，温柔可爱",
+    "紫粉渐变感，梦幻优雅",
+)
+
+private fun lightTheme(p: Long, onP: Long, pc: Long, onPc: Long, bg: Long, s1: Long, s2: Long) = lightColorScheme(
+    primary = Color(p),
+    onPrimary = Color(onP),
+    primaryContainer = Color(pc),
+    onPrimaryContainer = Color(onPc),
+    secondaryContainer = Color(pc),
+    onSecondaryContainer = Color(onPc),
+    background = Color(bg),
+    surface = Color(bg),
+    surfaceContainerHighest = Color(s1),
+    surfaceContainerHigh = Color(s2),
+    surfaceContainer = Color(s2),
+    surfaceVariant = Color(s1),
+)
 
 fun schemeFor(theme: Int) = when (theme) {
     1 -> darkColorScheme(
@@ -196,26 +222,11 @@ fun schemeFor(theme: Int) = when (theme) {
         surfaceContainerHighest = Color(0xFF1A1F29),
         surfaceContainerHigh = Color(0xFF1F2530),
     )
-    2 -> lightColorScheme(
-        primary = Color(0xFFB45309),
-        onPrimary = Color.White,
-        primaryContainer = Color(0xFFFDEBC8),
-        onPrimaryContainer = Color(0xFF6B2E05),
-        background = Color(0xFFFFFAF0),
-        surface = Color(0xFFFFFAF0),
-        surfaceContainerHighest = Color(0xFFF7EEDD),
-        surfaceContainerHigh = Color(0xFFFFF4E0),
-    )
-    else -> lightColorScheme(
-        primary = Color(0xFF6610F2),
-        onPrimary = Color.White,
-        primaryContainer = Color(0xFFEDE3FF),
-        onPrimaryContainer = Color(0xFF32077A),
-        background = Color.White,
-        surface = Color.White,
-        surfaceContainerHighest = Color(0xFFF4F1FC),
-        surfaceContainerHigh = Color(0xFFFAF8FF),
-    )
+    2 -> lightTheme(0xFF1D4ED8, 0xFFFFFFFF, 0xFFDBE6FF, 0xFF102A72, 0xFFFFFFFF, 0xFFF0F4FC, 0xFFF7F9FE)
+    3 -> lightTheme(0xFF2E9D5B, 0xFFFFFFFF, 0xFFD8F3E3, 0xFF0F4D2A, 0xFFF7FBF8, 0xFFE9F5EE, 0xFFF1F9F4)
+    4 -> lightTheme(0xFFE0538A, 0xFFFFFFFF, 0xFFFFE0EC, 0xFF7A1F45, 0xFFFFF8FB, 0xFFFCEAF1, 0xFFFFF1F6)
+    5 -> lightTheme(0xFF9B4DDB, 0xFFFFFFFF, 0xFFF3E1FF, 0xFF4B1670, 0xFFFCF8FF, 0xFFF3E9FB, 0xFFF8F1FD)
+    else -> lightTheme(0xFF3E95D6, 0xFFFFFFFF, 0xFFDDEFFC, 0xFF0B3D66, 0xFFF6FBFF, 0xFFE8F3FC, 0xFFF0F7FD)
 }
 
 fun openUrl(context: Context, url: String) {
@@ -475,7 +486,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("存钱记录", fontWeight = FontWeight.Bold) },
+                title = { Text("成长账本", fontWeight = FontWeight.Bold) },
                 actions = {
                     if (syncUrl.isNotBlank()) {
                         if (syncing) {
@@ -709,7 +720,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                 val todos = ArrayList<Todo>()
                 val live = accList.filter { !it.archived }
                 if (live.size <= 1) todos.add(Todo("新增你的银行卡 / 信用卡 / 交通卡账户") { showAccounts = true })
-                for (a in live.filter { it.opening == 0.0 && entries.none { e -> accOf(e, accList) == a.id || e.toAccountId == a.id } }) {
+                for (a in live.filter { acct -> acct.opening == 0.0 && entries.none { e -> accOf(e, accList) == acct.id || e.toAccountId == acct.id } }) {
                     todos.add(Todo("「${a.name}」还没填目前余额") { showAccounts = true })
                 }
                 for (a in live.filter { it.type == 2 && it.limit <= 0 }) todos.add(Todo("信用卡「${a.name}」还没填额度") { showAccounts = true })
@@ -1686,7 +1697,7 @@ fun SettingsDialog(
                         }
                         val send = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
-                            putExtra(Intent.EXTRA_SUBJECT, "存钱记录导出")
+                            putExtra(Intent.EXTRA_SUBJECT, "成长账本导出")
                             putExtra(Intent.EXTRA_TEXT, csv)
                         }
                         context.startActivity(Intent.createChooser(send, "导出记录"))

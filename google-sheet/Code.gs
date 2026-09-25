@@ -1,5 +1,5 @@
 /**
- * 存钱记录 → Google Sheet 同步脚本
+ * 成长账本 → Google Sheet 同步脚本
  * 「记录」表：日期 | 进出 | 金额 | 货币 | 结算金额 | 分类 | 账户 | 照片 | 备注 | 目标 | 编号
  * 「订阅」表：所有订阅支出
  * 「目标」表：每个存款目标 / 欠款的进度
@@ -66,7 +66,7 @@ function dailyCheck() {
   if (!lines.length) return;
   const email = Session.getEffectiveUser().getEmail();
   const ss = getSpreadsheet_();
-  MailApp.sendEmail(email, '💳 存钱记录：还款 / 订阅提醒', lines.join('\n\n') + '\n\n打开表格：' + ss.getUrl());
+  MailApp.sendEmail(email, '💳 成长账本：还款 / 订阅提醒', lines.join('\n\n') + '\n\n打开表格：' + ss.getUrl());
 }
 
 function nextDue_(today, day) {
@@ -78,7 +78,7 @@ function nextDue_(today, day) {
 }
 
 function doGet() {
-  return json_({ ok: true, msg: '存钱记录同步脚本运行中' });
+  return json_({ ok: true, msg: '成长账本同步脚本运行中' });
 }
 
 function doPost(e) {
@@ -163,7 +163,7 @@ function getSpreadsheet_() {
   if (id) {
     try { return SpreadsheetApp.openById(id); } catch (e) { /* 被删了就重建 */ }
   }
-  const ss = SpreadsheetApp.create('存钱记录');
+  const ss = SpreadsheetApp.create('成长账本');
   props.setProperty('SHEET_ID', ss.getId());
   return ss;
 }

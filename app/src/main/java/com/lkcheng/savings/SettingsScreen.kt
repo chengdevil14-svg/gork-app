@@ -142,6 +142,7 @@ fun SettingsScreen(
     val titles = mapOf(
         "" to "设置",
         "theme" to "主题",
+        "icon" to "图标",
         "color" to "颜色",
         "currency" to "货币",
         "remind" to "提醒与通知",
@@ -172,7 +173,9 @@ fun SettingsScreen(
                 "" -> Column {
                     val remTxt = if (prefs.remOn.value) "已开启" else "已关闭"
                     Card(shape = RoundedCornerShape(16.dp)) {
-                        MenuItem("🎨", "主题", THEME_NAMES[theme]) { page = "theme" }
+                        MenuItem("🎨", "主题", THEME_NAMES.getOrElse(theme) { "冰蓝" }) { page = "theme" }
+                        HorizontalDivider()
+                        MenuItem("🖼", "图标", APP_ICONS.getOrElse(AppIcons.current(LocalContext.current)) { APP_ICONS[0] }.name) { page = "icon" }
                         HorizontalDivider()
                         MenuItem("🟢", "颜色", if (greenIncome) "存入绿 · 取出红" else "存入红 · 取出绿") { page = "color" }
                         HorizontalDivider()
@@ -195,13 +198,14 @@ fun SettingsScreen(
                     }
                     Spacer(Modifier.height(16.dp))
                     Text(
-                        "存钱记录 v" + appVersion(LocalContext.current),
+                        "成长账本 v" + appVersion(LocalContext.current),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
                 "theme" -> Column { ThemePage(theme, onTheme) }
+                "icon" -> Column { IconPage() }
                 "color" -> Column { ColorPage(greenIncome, onGreen) }
                 "currency" -> Column { CurrencyPage(onCurrency) }
                 "remind" -> Column { RemindPage(prefs, goals, subs, syncUrl, onEditGoal, onEditSub) }
@@ -302,7 +306,7 @@ fun OptionRow(title: String, sub: String?, selected: Boolean, leading: @Composab
 
 @Composable
 fun ThemePage(theme: Int, onTheme: (Int) -> Unit) {
-    val subs = listOf("白底 + 靛蓝 #6610F2，清爽明亮", "深色背景，晚上看不刺眼", "米白底 + 暖金色，温暖柔和")
+    val subs = THEME_DESC
     Card(shape = RoundedCornerShape(16.dp)) {
         for (i in THEME_NAMES.indices) {
             if (i > 0) HorizontalDivider()
@@ -319,6 +323,62 @@ fun ThemePage(theme: Int, onTheme: (Int) -> Unit) {
                 },
             ) { onTheme(i) }
         }
+    }
+}
+
+@Composable
+fun IconPage() {
+    val ctx = LocalContext.current
+    var cur by remember { mutableIntStateOf(AppIcons.current(ctx)) }
+    var msg by remember { mutableStateOf("") }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            msg = if (AppIcons.pinCustom(ctx, uri, "成长账本")) {
+                "已请求加到桌面：请在弹出的窗口点「添加」"
+            } else {
+                "这台手机的桌面不支持自定义图标"
+            }
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Card(shape = RoundedCornerShape(16.dp)) {
+            for ((i, ic) in APP_ICONS.withIndex()) {
+                if (i > 0) HorizontalDivider()
+                OptionRow(
+                    ic.name, null, cur == i,
+                    leading = {
+                        Box(
+                            Modifier
+                                .padding(end = 14.dp)
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(Color(ic.bg)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            androidx.compose.foundation.Image(
+                                painter = androidx.compose.ui.res.painterResource(ic.fg),
+                                contentDescription = null,
+                                modifier = Modifier.size(66.dp),
+                            )
+                        }
+                    },
+                ) {
+                    AppIcons.apply(ctx, i)
+                    cur = i
+                    msg = "✅ 已换成「${ic.name}」，桌面图标几秒后更新（有些手机要回到桌面才会变）"
+                }
+            }
+        }
+        OutlinedButton(
+            onClick = { picker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("📷 用自己的图片做桌面图标") }
+        Text(
+            "安卓不允许 app 直接把自己的图标换成任意图片，所以自定义图片会在桌面新增一个快捷方式（点它一样打开 app）。你可以把原来的图标移走，只留这个。",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (msg.isNotEmpty()) Text(msg, fontSize = 13.sp)
     }
 }
 
@@ -423,7 +483,7 @@ fun RemindPage(
                             Spacer(Modifier.width(8.dp))
                             TextButton(
                                 onClick = {
-                                    if (!Reminders.addPhoneAlarm(ctx, h.value, m.value, "存钱记录 · " + s.title)) {
+                                    if (!Reminders.addPhoneAlarm(ctx, h.value, m.value, "成长账本 · " + s.title)) {
                                         toast = "这台手机的时钟 app 不支持自动添加闹钟"
                                     }
                                 },
@@ -625,7 +685,7 @@ fun RemindPage(
             Text("提醒不准时？打开系统设置")
         }
         Text(
-            "小米 / 红米 / OPPO / vivo 等手机：请在系统设置里给「存钱记录」开启「自启动」，省电策略选「无限制」，否则提醒可能被系统拦截。",
+            "小米 / 红米 / OPPO / vivo 等手机：请在系统设置里给「成长账本」开启「自启动」，省电策略选「无限制」，否则提醒可能被系统拦截。",
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -774,7 +834,7 @@ fun SyncPage(syncUrl: String, sheetUrl: String, onSyncUrl: (String) -> Unit, onS
                     GuideStep("3", "全选删掉原来的代码，粘贴，保存 💾") {}
                     GuideStep("4", "上方函数选「setup」，点「运行」") {
                         Text(
-                            "会要求授权：选你的账号 →「高级」→「前往（不安全）」→「允许」。这是你自己的脚本，只能访问你自己的表格。运行完会自动建好「存钱记录」表格。",
+                            "会要求授权：选你的账号 →「高级」→「前往（不安全）」→「允许」。这是你自己的脚本，只能访问你自己的表格。运行完会自动建好「成长账本」表格。",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -889,7 +949,7 @@ fun DataPage(entries: List<Entry>, onClearAll: () -> Unit) {
                 }
                 val send = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
-                    putExtra(Intent.EXTRA_SUBJECT, "存钱记录导出")
+                    putExtra(Intent.EXTRA_SUBJECT, "成长账本导出")
                     putExtra(Intent.EXTRA_TEXT, csv)
                 }
                 ctx.startActivity(Intent.createChooser(send, "导出记录"))

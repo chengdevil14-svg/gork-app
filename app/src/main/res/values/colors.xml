@@ -1,3 +1,8 @@
 <resources>
-    <color name="ic_bg">#6610F2</color>
+    <color name="ic_bg_book">#3E95D6</color>
+    <color name="ic_bg_coin">#1D4ED8</color>
+    <color name="ic_bg_leaf">#2E9D5B</color>
+    <color name="ic_bg_pig">#E0538A</color>
+    <color name="ic_bg_heart">#9B4DDB</color>
+    <color name="ic_bg">#3E95D6</color>
 </resources>
