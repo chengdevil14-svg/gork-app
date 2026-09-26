@@ -124,8 +124,8 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         super.onStart()
         val st = Store(applicationContext)
         if (st.getB(AppLock.ON, false) && leftAt > 0) {
-            val after = st.getI(AppLock.AFTER, 0) * 1000L
-            if (android.os.SystemClock.elapsedRealtime() - leftAt >= after) locked.value = true
+            val sec = st.getI(AppLock.AFTER, 0)
+            if (sec >= 0 && android.os.SystemClock.elapsedRealtime() - leftAt >= sec * 1000L) locked.value = true
         }
     }
 

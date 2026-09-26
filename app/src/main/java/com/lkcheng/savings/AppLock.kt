@@ -155,6 +155,7 @@ fun LockScreen(store: Store, onUnlock: () -> Unit) {
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun AppLockPage(store: Store, onSecureChange: (Boolean) -> Unit) {
     val activity = LocalContext.current as FragmentActivity
@@ -248,8 +249,17 @@ fun AppLockPage(store: Store, onSecureChange: (Boolean) -> Unit) {
             }
         }
         SectionTitle("什么时候锁")
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for ((label, sec) in listOf("每次打开" to 0, "离开 1 分钟" to 60, "离开 5 分钟" to 300)) {
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for ((label, sec) in listOf(
+                "每次离开就锁" to 0,
+                "离开 30 秒" to 30,
+                "离开 1 分钟" to 60,
+                "离开 5 分钟" to 300,
+                "离开 15 分钟" to 900,
+                "离开 30 分钟" to 1800,
+                "离开 1 小时" to 3600,
+                "只在重新打开 app 时" to -1,
+            )) {
                 androidx.compose.material3.FilterChip(
                     selected = after == sec,
                     onClick = {
@@ -260,6 +270,15 @@ fun AppLockPage(store: Store, onSecureChange: (Boolean) -> Unit) {
                 )
             }
         }
+        Text(
+            when (after) {
+                0 -> "切到别的 app 或锁屏，回来就要解锁（最安全）"
+                -1 -> "只有 app 被完全关闭 / 手机重启后再打开才要解锁（最方便）"
+                else -> "离开超过这个时间才要解锁，短时间切出去回来不用"
+            },
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         SectionTitle("隐私")
         androidx.compose.material3.Card(shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)) {
             SwitchRow("在「最近任务」隐藏画面", "多任务界面看不到金额。开启后也不能在 app 内截图。", secure) { v ->
