@@ -151,6 +151,7 @@ fun SettingsScreen(
         "remind" to "提醒与通知",
         "popup" to "打开 app 时提醒",
         "home" to "首页显示",
+        "lock" to "应用锁",
         "sync" to "Google Sheet 同步",
         "data" to "数据与备份",
     )
@@ -195,6 +196,9 @@ fun SettingsScreen(
                         MenuItem("📋", "打开 app 时提醒", if (prefs.popupOn.value) "已开启" else "已关闭") { page = "popup" }
                         HorizontalDivider()
                         MenuItem("🏠", "首页显示", "选择首页要显示哪些区块") { page = "home" }
+                        HorizontalDivider()
+                        val lockCtx = LocalContext.current
+                        MenuItem("🔒", "应用锁", if (Store(lockCtx).getB(AppLock.ON, false)) "已开启" else "指纹 / 人脸 / 密码") { page = "lock" }
                     }
                     Spacer(Modifier.height(12.dp))
                     Card(shape = RoundedCornerShape(16.dp)) {
@@ -216,6 +220,14 @@ fun SettingsScreen(
                 "currency" -> Column { CurrencyPage(onCurrency) }
                 "remind" -> Column { RemindPage(prefs, goals, subs, syncUrl, onEditGoal, onEditSub) }
                 "popup" -> Column { PopupPage(prefs) }
+                "lock" -> Column {
+                    val lctx = LocalContext.current
+                    AppLockPage(remember { Store(lctx) }) { on ->
+                        val w = (lctx as android.app.Activity).window
+                        if (on) w.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                        else w.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                }
                 "home" -> Column {
                     Card(shape = RoundedCornerShape(16.dp)) {
                         SwitchRow("💳 账户余额", "首页显示各账户余额", prefs.homeAcc.value) { prefs.homeAcc.value = it }

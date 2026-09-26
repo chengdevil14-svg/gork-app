@@ -111,7 +111,29 @@ import java.time.YearMonth
 private val GREEN = Color(0xFF16A34A)
 private val RED = Color(0xFFDC2626)
 
-class MainActivity : ComponentActivity() {
+class MainActivity : androidx.fragment.app.FragmentActivity() {
+    private val locked = mutableStateOf(false)
+    private var leftAt = 0L
+
+    override fun onStop() {
+        super.onStop()
+        leftAt = android.os.SystemClock.elapsedRealtime()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val st = Store(applicationContext)
+        if (st.getB(AppLock.ON, false) && leftAt > 0) {
+            val after = st.getI(AppLock.AFTER, 0) * 1000L
+            if (android.os.SystemClock.elapsedRealtime() - leftAt >= after) locked.value = true
+        }
+    }
+
+    private fun applySecure(on: Boolean) {
+        if (on) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val crash = File(filesDir, "crash.txt")
@@ -122,6 +144,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val store = Store(applicationContext)
         Cur.load(store)
+        locked.value = store.getB(AppLock.ON, false)
+        applySecure(store.getB(AppLock.SECURE, false))
         val openAdd = intent?.getBooleanExtra("open_add", false) == true
         val openScan = intent?.getBooleanExtra("open_scan", false) == true
         val sharedUri: android.net.Uri? = if (intent?.action == Intent.ACTION_SEND && intent.type?.startsWith("image/") == true) {
@@ -146,7 +170,9 @@ class MainActivity : ComponentActivity() {
                 )
             }
             MaterialTheme(colorScheme = schemeFor(theme)) {
-                SavingsApp(store, theme, openAdd, sharedUri, openScan) { t ->
+                if (locked.value) {
+                    LockScreen(store) { locked.value = false }
+                } else SavingsApp(store, theme, openAdd, sharedUri, openScan) { t ->
                     theme = t
                     store.theme = t
                     Widgets.updateAll(applicationContext)
