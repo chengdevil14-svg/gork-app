@@ -1371,10 +1371,23 @@ fun EntryDialog(
 ) {
     val context = LocalContext.current
     val liveAccounts = accounts.filter { !it.archived || it.id == initial?.accountId || it.id == initial?.toAccountId }
-    fun hintAccount(hint: String): Long? = if (hint.isBlank()) null else accounts.firstOrNull { a ->
-        !a.archived && (a.name.contains(hint, true) || hint.contains(a.name, true) ||
-            (hint.startsWith("Touch") && (a.name.contains("TNG", true) || a.name.contains("Touch", true))))
-    }?.id
+    fun hintAccount(hint: String, raw: String = ""): Long? {
+        val live = accounts.filter { !it.archived }
+        if (hint.isNotBlank()) {
+            live.firstOrNull { a ->
+                a.name.contains(hint, true) || hint.contains(a.name, true) ||
+                    (hint.startsWith("Touch") && (a.name.contains("TNG", true) || a.name.contains("Touch", true)))
+            }?.let { return it.id }
+        }
+        // account name (e.g. "OCBC", "DBS 信用卡") appearing anywhere in the screenshot
+        if (raw.isNotBlank()) {
+            live.filter { it.type != 0 }.sortedByDescending { it.name.length }.firstOrNull { a ->
+                val key = a.name.replace("信用卡", "").replace("卡", "").trim()
+                key.length >= 2 && raw.contains(key, true)
+            }?.let { return it.id }
+        }
+        return null
+    }
     var tag by remember { mutableStateOf(initial?.tag ?: prefill?.tag ?: "") }
     var cur by remember { mutableStateOf(initial?.currency ?: prefill?.currency ?: Cur.code) }
     var goalId by remember { mutableLongStateOf(initial?.goalId ?: 0L) }
@@ -1382,7 +1395,7 @@ fun EntryDialog(
     var transfer by remember { mutableStateOf(initial?.isTransfer ?: false) }
     var accId by remember {
         mutableLongStateOf(
-            initial?.let { accOf(it, accounts) } ?: prefill?.let { hintAccount(it.accountHint) } ?: accounts.firstOrNull { !it.archived }?.id ?: 0L
+            initial?.let { accOf(it, accounts) } ?: prefill?.let { hintAccount(it.accountHint, it.rawText) } ?: accounts.firstOrNull { !it.archived }?.id ?: 0L
         )
     }
     var toAccId by remember { mutableLongStateOf(initial?.toAccountId ?: 0L) }
@@ -1412,7 +1425,7 @@ fun EntryDialog(
                     tag = r.tag
                     if (r.note.isNotBlank()) note = r.note
                     r.date?.let { date = it }
-                    hintAccount(r.accountHint)?.let { accId = it }
+                    hintAccount(r.accountHint, r.rawText)?.let { accId = it }
                     scanMsg = "🧾 已识别，请核对后保存"
                 }
             }

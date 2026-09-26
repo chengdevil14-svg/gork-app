@@ -33,10 +33,16 @@ object Scan {
             return
         }
         val client = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
+        val h = image.height.toFloat()
         client.process(image)
             .addOnSuccessListener { res ->
-                val lines = res.textBlocks.flatMap { b -> b.lines.map { it.text } }
-                done(parse(lines, photo))
+                // skip the phone status bar (clock, network speed, battery) at the very top
+                val all = res.textBlocks.flatMap { b -> b.lines }
+                    .filter { l -> (l.boundingBox?.top ?: 0) > h * 0.055f }
+                    .sortedBy { it.boundingBox?.top ?: 0 }
+                val lines = all.map { it.text }
+                val big = all.sortedByDescending { it.boundingBox?.height() ?: 0 }.map { it.text }
+                done(parse(lines, photo, big))
                 client.close()
             }
             .addOnFailureListener {
@@ -80,14 +86,19 @@ object Scan {
         "touch 'n go", "touch n go", "tng", "grabpay", "boost", "completed", "merchant", "method", "交易", "详情", "成功",
         "付款", "金额", "日期", "时间", "状态", "余额", "参考", "完成", "收据",
     )
-    private val MERCHANT_LABELS = listOf("merchant", "paid to", "pay to", "to:", "recipient", "payee", "商家", "收款方", "付款给", "转给")
+    private val MERCHANT_LABELS = listOf(
+        "对账单名称", "statement name", "merchant", "paid to", "pay to", "to:", "recipient", "payee",
+        "商家", "收款方", "付款给", "转给", "商户",
+    )
+
+    private val bigAmountRe = Regex("""(RM|MYR|S\$|SGD|US\$|USD)\s*([+\-−]?)\s*(\d{1,3}(?:,\d{3})+|\d+)(?:[.,](\d{2}))?(?!\d)""", RegexOption.IGNORE_CASE)
 
     private val amountRe = Regex(
         """(RM|MYR|S\$|SGD|US\$|USD|\$)?\s*([+\-−]?)\s*(\d{1,3}(?:,\d{3})+|\d+)\.(\d{2})(?!\d)""",
         RegexOption.IGNORE_CASE,
     )
 
-    fun parse(lines: List<String>, photo: String): ScanResult {
+    fun parse(lines: List<String>, photo: String, big: List<String> = emptyList()): ScanResult {
         val all = lines.joinToString("\n")
         val lower = all.lowercase(Locale.ROOT)
 
@@ -104,7 +115,33 @@ object Scan {
             }
             Amt(v, code, m.groupValues[2], c.isNotEmpty())
         }.filter { it.v > 0 && it.v < 1_000_000 }.toList()
-        val best = amts.firstOrNull { it.marked } ?: amts.maxByOrNull { it.v }
+        // 1) the biggest text on screen is usually the amount
+        var bigAmt: Amt? = null
+        for (l in big.take(4)) {
+            val m1 = amountRe.find(l)
+            if (m1 != null) {
+                val v = (m1.groupValues[3].replace(",", "") + "." + m1.groupValues[4]).toDoubleOrNull()
+                if (v != null && v > 0) {
+                    val c = m1.groupValues[1].uppercase(Locale.ROOT)
+                    bigAmt = Amt(v, codeOf(c), m1.groupValues[2], c.isNotEmpty())
+                    break
+                }
+            }
+            val m2 = bigAmountRe.find(l)
+            if (m2 != null) {
+                val digits = m2.groupValues[3].replace(",", "")
+                val cents = m2.groupValues[4]
+                // big font often loses the decimal point: "SGD216" → 2.16
+                val v = if (cents.isNotEmpty()) "$digits.$cents".toDoubleOrNull()
+                else if (digits.length >= 3) digits.toDouble() / 100.0
+                else digits.toDoubleOrNull()
+                if (v != null && v > 0) {
+                    bigAmt = Amt(v, codeOf(m2.groupValues[1].uppercase(Locale.ROOT)), m2.groupValues[2], true)
+                    break
+                }
+            }
+        }
+        val best = bigAmt ?: amts.firstOrNull { it.marked } ?: amts.maxByOrNull { it.v }
 
         var currency = best?.cur
         if (currency == null) {
@@ -137,6 +174,13 @@ object Scan {
             }
         }
         if (note.isEmpty()) {
+            note = big.map { it.trim() }.take(4).firstOrNull { l ->
+                val ll = l.lowercase(Locale.ROOT)
+                l.length in 3..40 && l.count { it.isLetter() } >= 3 && amountRe.find(l) == null &&
+                    bigAmountRe.find(l) == null && SKIP_WORDS.none { w -> ll == w }
+            } ?: ""
+        }
+        if (note.isEmpty()) {
             note = lines.map { it.trim() }.firstOrNull { l ->
                 val ll = l.lowercase(Locale.ROOT)
                 l.length in 3..40 &&
@@ -159,6 +203,13 @@ object Scan {
             else -> ""
         }
         return ScanResult(best?.v, currency, isIn, tag, note.take(40), date, accountHint, photo, all)
+    }
+
+    private fun codeOf(c: String): String? = when (c) {
+        "RM", "MYR" -> "MYR"
+        "S$", "SGD" -> "SGD"
+        "US$", "USD" -> "USD"
+        else -> null
     }
 
     private val MONTHS = mapOf(
@@ -185,6 +236,12 @@ object Scan {
             }
             Regex("""(20\d{2})年(\d{1,2})月(\d{1,2})日""").find(t)?.let {
                 return LocalDate.of(it.groupValues[1].toInt(), it.groupValues[2].toInt(), it.groupValues[3].toInt())
+            }
+            Regex("""(\d{1,2})月(\d{1,2})日""").find(t)?.let {
+                val now = LocalDate.now()
+                var d = LocalDate.of(now.year, it.groupValues[1].toInt(), it.groupValues[2].toInt())
+                if (d.isAfter(now.plusDays(1))) d = d.minusYears(1)
+                return d
             }
         } catch (e: Exception) {
             return null
