@@ -1407,6 +1407,8 @@ fun EntryDialog(
     var photo by remember { mutableStateOf(initial?.photo ?: prefill?.photo ?: "") }
     var scanning by remember { mutableStateOf(false) }
     var scanMsg by remember { mutableStateOf(if (prefill != null) "🧾 已从截图识别，请核对后保存" else "") }
+    var rawText by remember { mutableStateOf(prefill?.rawText ?: "") }
+    var showRaw by remember { mutableStateOf(false) }
     val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
             val name = Photos.import(context, uri)
@@ -1427,6 +1429,7 @@ fun EntryDialog(
                     r.date?.let { date = it }
                     hintAccount(r.accountHint, r.rawText)?.let { accId = it }
                     scanMsg = "🧾 已识别，请核对后保存"
+                    rawText = r.rawText
                 }
             }
         }
@@ -1485,7 +1488,24 @@ fun EntryDialog(
                             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                             Spacer(Modifier.width(8.dp))
                         }
-                        Text(scanMsg, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                        Text(scanMsg, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                        if (rawText.isNotBlank()) {
+                            TextButton(onClick = { showRaw = !showRaw }, contentPadding = PaddingValues(horizontal = 4.dp)) {
+                                Text(if (showRaw) "收起" else "查看识别文字", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                    if (showRaw && rawText.isNotBlank()) {
+                        Text(
+                            rawText,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .padding(8.dp),
+                        )
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

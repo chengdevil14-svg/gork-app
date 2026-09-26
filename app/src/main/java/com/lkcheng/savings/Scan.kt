@@ -40,8 +40,20 @@ object Scan {
                 val all = res.textBlocks.flatMap { b -> b.lines }
                     .filter { l -> (l.boundingBox?.top ?: 0) > h * 0.055f }
                     .sortedBy { it.boundingBox?.top ?: 0 }
-                val lines = all.map { it.text }
-                val big = all.sortedByDescending { it.boundingBox?.height() ?: 0 }.map { it.text }
+                val lines = all.map { norm(it.text) }
+                val bigSorted = all.sortedByDescending { it.boundingBox?.height() ?: 0 }
+                val big = bigSorted.map { norm(it.text) }.toMutableList()
+                // big amount split into two lines ("SGD2" + ".16"): glue the line right after it
+                if (bigSorted.isNotEmpty()) {
+                    val top = bigSorted[0]
+                    val idx = all.indexOf(top)
+                    val next = all.getOrNull(idx + 1)
+                    if (next != null && Regex("""^\s*[.]?\s*\d{2}\b""").containsMatchIn(norm(next.text)) &&
+                        !Regex("""\d[.]\d{2}""").containsMatchIn(norm(top.text))
+                    ) {
+                        big.add(0, norm(top.text) + "." + norm(next.text).trim().trimStart('.'))
+                    }
+                }
                 done(parse(lines, photo, big))
                 client.close()
             }
@@ -97,6 +109,28 @@ object Scan {
         """(RM|MYR|S\$|SGD|US\$|USD|\$)?\s*([+\-−]?)\s*(\d{1,3}(?:,\d{3})+|\d+)\.(\d{2})(?!\d)""",
         RegexOption.IGNORE_CASE,
     )
+
+    /** Normalise OCR quirks: full-width chars, odd decimal points, digits split by spaces. */
+    fun norm(s0: String): String {
+        val sb = StringBuilder()
+        for (ch in s0) {
+            sb.append(
+                when (ch) {
+                    in '\uFF10'..'\uFF19' -> '0' + (ch - '\uFF10')
+                    in '\uFF21'..'\uFF3A' -> 'A' + (ch - '\uFF21')
+                    in '\uFF41'..'\uFF5A' -> 'a' + (ch - '\uFF41')
+                    '。', '．', '·', '∙', '•', '・', '˙' -> '.'
+                    '，' -> ','
+                    '＄' -> '$'
+                    else -> ch
+                }
+            )
+        }
+        var s = sb.toString()
+        s = s.replace(Regex("""(\d)\s*\.\s*(\d)"""), "$1.$2") // "2 . 16" → "2.16"
+        s = s.replace(Regex("""((?:SGD|MYR|USD|RM|S\$|US\$)\s*\d+)\s+(\d{2})(?!\d)""", RegexOption.IGNORE_CASE), "$1.$2") // "SGD2 16"
+        return s
+    }
 
     fun parse(lines: List<String>, photo: String, big: List<String> = emptyList()): ScanResult {
         val all = lines.joinToString("\n")
