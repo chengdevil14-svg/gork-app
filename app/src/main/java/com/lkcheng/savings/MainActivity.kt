@@ -170,9 +170,34 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                 )
             }
             MaterialTheme(colorScheme = schemeFor(theme)) {
+                var quickPending by remember { mutableStateOf(openAdd) }
+                val quickOk = store.getB(AppLock.QUICK, true)
                 if (locked.value) {
-                    LockScreen(store) { locked.value = false }
-                } else SavingsApp(store, theme, openAdd, sharedUri, openScan) { t ->
+                    val showQuick = quickPending && quickOk
+                    LockScreen(store, autoPrompt = !showQuick) { locked.value = false }
+                    if (showQuick) {
+                        val green = store.greenForIncome
+                        EntryDialog(
+                            initial = null,
+                            defaultDate = LocalDate.now(),
+                            inc = if (green) GREEN else RED,
+                            exp = if (green) RED else GREEN,
+                            inTags = INCOME_TAGS,
+                            outTags = EXPENSE_TAGS,
+                            goals = emptyList(),
+                            accounts = store.loadAccounts(),
+                            prefill = null,
+                            onDismiss = { quickPending = false },
+                            onSave = { e ->
+                                store.saveEntries(store.loadEntries() + e)
+                                Widgets.updateAll(applicationContext)
+                                quickPending = false
+                                android.widget.Toast.makeText(applicationContext, "✅ 已记下 " + signedMoneyC(e.amount, e.currency), android.widget.Toast.LENGTH_SHORT).show()
+                            },
+                            onDelete = {},
+                        )
+                    }
+                } else SavingsApp(store, theme, openAdd && quickPending, sharedUri, openScan) { t ->
                     theme = t
                     store.theme = t
                     Widgets.updateAll(applicationContext)

@@ -44,6 +44,7 @@ object AppLock {
     const val AFTER = "lock_after" // 秒：0 每次, 60, 300
     const val PIN = "lock_pin"
     const val SECURE = "lock_secure"
+    const val QUICK = "lock_quick" // 记账窗口免解锁
 
     fun hash(pin: String): String =
         MessageDigest.getInstance("SHA-256").digest(("cz-" + pin).toByteArray()).joinToString("") { "%02x".format(it) }
@@ -122,13 +123,13 @@ fun PinPad(title: String, sub: String, error: String, onDone: (String) -> Unit, 
 }
 
 @Composable
-fun LockScreen(store: Store, onUnlock: () -> Unit) {
+fun LockScreen(store: Store, autoPrompt: Boolean = true, onUnlock: () -> Unit) {
     val activity = LocalContext.current as FragmentActivity
     val method = store.getI(AppLock.METHOD, 0)
     val sysOk = remember { AppLock.canSystem(activity) }
     var error by remember { mutableStateOf("") }
     fun sys() = AppLock.prompt(activity, "解锁成长账本", onUnlock) { msg -> error = msg }
-    LaunchedEffect(Unit) { if (method == 0 && sysOk) sys() }
+    LaunchedEffect(autoPrompt) { if (autoPrompt && method == 0 && sysOk) sys() }
     Box(
         Modifier
             .fillMaxSize()
@@ -279,6 +280,18 @@ fun AppLockPage(store: Store, onSecureChange: (Boolean) -> Unit) {
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        SectionTitle("快速记账")
+        androidx.compose.material3.Card(shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)) {
+            var quick by remember { mutableStateOf(store.getB(AppLock.QUICK, true)) }
+            SwitchRow(
+                "记账窗口免解锁",
+                "从桌面小部件或通知点「记一笔」，不用解锁就能记账；记完仍然锁着，看不到其他数据",
+                quick,
+            ) { v ->
+                quick = v
+                store.setB(AppLock.QUICK, v)
+            }
+        }
         SectionTitle("隐私")
         androidx.compose.material3.Card(shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)) {
             SwitchRow("在「最近任务」隐藏画面", "多任务界面看不到金额。开启后也不能在 app 内截图。", secure) { v ->
