@@ -23,7 +23,7 @@ val EXPENSE_TAGS = listOf(
 )
 
 val INCOME_TAGS = listOf(
-    "工资", "存款", "奖金", "副业", "投资收益", "利息", "退款", "红包", "借入", "其他",
+    "工资", "存款", "奖金", "副业", "投资收益", "股息", "利息", "退款", "红包", "借入", "其他",
 )
 
 /** Used tags (most used first) + presets, no duplicates. */

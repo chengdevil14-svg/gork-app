@@ -152,6 +152,7 @@ fun SettingsScreen(
         "popup" to "打开 app 时提醒",
         "home" to "首页显示",
         "lock" to "应用锁",
+        "widget" to "桌面小部件",
         "sync" to "Google Sheet 同步",
         "data" to "数据与备份",
     )
@@ -198,6 +199,8 @@ fun SettingsScreen(
                         MenuItem("🏠", "首页显示", "选择首页要显示哪些区块") { page = "home" }
                         HorizontalDivider()
                         val lockCtx = LocalContext.current
+                        MenuItem("🧩", "桌面小部件", "圆环图显示内容") { page = "widget" }
+                        HorizontalDivider()
                         MenuItem("🔒", "应用锁", if (Store(lockCtx).getB(AppLock.ON, false)) "已开启" else "指纹 / 人脸 / 密码") { page = "lock" }
                     }
                     Spacer(Modifier.height(12.dp))
@@ -220,6 +223,28 @@ fun SettingsScreen(
                 "currency" -> Column { CurrencyPage(onCurrency) }
                 "remind" -> Column { RemindPage(prefs, goals, subs, syncUrl, onEditGoal, onEditSub) }
                 "popup" -> Column { PopupPage(prefs) }
+                "widget" -> Column {
+                    val wctx = LocalContext.current
+                    val wst = remember { Store(wctx) }
+                    var mode by remember { mutableIntStateOf(wst.getI("widget_ring_mode", 0)) }
+                    Text("5×2「圆环图」小部件右边显示：", fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp))
+                    Card(shape = RoundedCornerShape(16.dp)) {
+                        for ((i, name) in RING_MODES.withIndex()) {
+                            if (i > 0) HorizontalDivider()
+                            OptionRow(name, null, mode == i) {
+                                mode = i
+                                wst.setI("widget_ring_mode", i)
+                                Widgets.updateAll(wctx.applicationContext)
+                            }
+                        }
+                    }
+                    Text(
+                        "加小部件：长按桌面空白处 → 小部件 → 成长账本 → 选「圆环图」(5×2)、「今日概览」(4×2) 或「快速记账」(2×1)。\n利息 / 股息：分类选「利息」或「投资收益」，或分类里含「股息」的记录会算进去。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+                }
                 "lock" -> Column {
                     val lctx = LocalContext.current
                     AppLockPage(remember { Store(lctx) }) { on ->
