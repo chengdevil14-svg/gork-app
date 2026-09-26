@@ -120,7 +120,7 @@ fun computeRing(st: Store, mode: Int, entries: List<Entry>, accounts: List<Accou
                 Ring("目标 / 欠款", "-", "还没有目标", emptyList(), 0.0)
             } else {
                 val s = calcGoal(g, entries, total)
-                Ring(g.name, "${(s.pct * 100).toInt()}%", if (g.debt) "还欠 ${money(s.remaining)}" else "还差 ${money(s.remaining)}", listOf(g.name to s.pct), 1.0)
+                Ring(g.name, "${(s.pct * 100).toInt()}%", if (g.debt) "还欠 ${moneyC(s.remaining, g.currency)}" else "还差 ${moneyC(s.remaining, g.currency)}", listOf(g.name to s.pct), 1.0)
             }
         }
         else -> {

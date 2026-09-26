@@ -54,6 +54,7 @@ data class Goal(
     val rate: Double = 0.0, // 欠款年利率 %
     val accrued: Double = 0.0, // 已累计加进欠款的利息
     val accruedUntil: String = "", // yyyy-MM：利息已算到哪个月（含）
+    val currency: String = "SGD",
 )
 
 data class Sub(
@@ -163,6 +164,7 @@ class Store(context: Context) {
                         rate = o.optDouble("rate", 0.0),
                         accrued = o.optDouble("accrued", 0.0),
                         accruedUntil = o.optString("accruedUntil", ""),
+                        currency = o.optString("currency", "SGD").ifBlank { "SGD" },
                     )
                 )
             } catch (e: Exception) {
@@ -190,6 +192,7 @@ class Store(context: Context) {
                     .put("rate", g.rate)
                     .put("accrued", g.accrued)
                     .put("accruedUntil", g.accruedUntil)
+                    .put("currency", g.currency)
             )
         }
         sp.edit().putString("goals", arr.toString()).apply()

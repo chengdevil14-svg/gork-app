@@ -53,7 +53,7 @@ fun dailyLines(
     }
     for ((g, st) in goals) {
         if (g.debt && g.rate > 0 && st.remaining > 0) {
-            costs.add(CostLine("${g.name} 利息", st.dailyInterest, "欠 ${money(st.remaining)} × ${pct(g.rate)} ÷ 365"))
+            costs.add(CostLine("${g.name} 利息", Fx.toBase(st.dailyInterest, g.currency), "欠 ${moneyC(st.remaining, g.currency)} × ${pct(g.rate)} ÷ 365"))
         }
     }
     for (d in deposits.filter { it.active }) {

@@ -1092,7 +1092,7 @@ fun WelcomeDialog(entries: List<Entry>, goals: List<Goal>, subs: List<Sub>, onAd
                     for ((g, left) in plans) {
                         val v = if (g.debt) "还" else "存"
                         Text(
-                            if (left > 0) "· ${g.name}：本月还需$v ${money(left)}" else "· ${g.name}：本月已完成 ✅",
+                            if (left > 0) "· ${g.name}：本月还需$v ${moneyC(left, g.currency)}" else "· ${g.name}：本月已完成 ✅",
                             fontSize = 14.sp,
                         )
                     }

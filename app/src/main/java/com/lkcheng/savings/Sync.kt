@@ -120,6 +120,7 @@ object Sync {
                 JSONObject()
                     .put("name", g.name)
                     .put("type", if (g.debt) "欠款" else "存款目标")
+                    .put("currency", g.currency)
                     .put("target", g.target)
                     .put("done", st.done)
                     .put("remaining", st.remaining)

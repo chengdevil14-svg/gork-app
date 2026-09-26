@@ -91,12 +91,12 @@ fun parseYm(s: String): YearMonth? = try {
 fun ymCn(ym: YearMonth) = "${ym.year}年${ym.monthValue}月"
 
 /** How much an entry counts toward a goal: payments (取出) count for debts, deposits for savings. */
-fun contribution(g: Goal, e: Entry) = if (g.debt) -e.base else e.base
+fun contribution(g: Goal, e: Entry) = Fx.convert(if (g.debt) -e.amount else e.amount, e.currency, g.currency)
 
 fun calcGoal(g: Goal, entries: List<Entry>, total: Double, now: YearMonth = YearMonth.now()): GoalStat {
     val linked = entries.filter { it.goalId == g.id }
     val byTotal = !g.debt && g.useTotal
-    val done = if (byTotal) total else g.startDone + linked.sumOf { contribution(g, it) }
+    val done = if (byTotal) Fx.convert(total, Cur.code, g.currency) else g.startDone + linked.sumOf { contribution(g, it) }
     val owed = g.target + (if (g.debt) g.accrued else 0.0)
     val remaining = max(0.0, owed - done)
     val pct = if (owed > 0) (done / owed).coerceIn(0.0, 1.0) else 0.0
@@ -104,7 +104,7 @@ fun calcGoal(g: Goal, entries: List<Entry>, total: Double, now: YearMonth = Year
     var never = false
     var futureInterest = 0.0
     val thisMonth = if (byTotal) {
-        entries.filter { YearMonth.from(it.date) == now && !it.isTransfer }.sumOf { it.base }
+        Fx.convert(entries.filter { YearMonth.from(it.date) == now && !it.isTransfer }.sumOf { it.base }, Cur.code, g.currency)
     } else {
         linked.filter { YearMonth.from(it.date) == now }.sumOf { contribution(g, it) }
     }
@@ -155,6 +155,7 @@ fun calcGoal(g: Goal, entries: List<Entry>, total: Double, now: YearMonth = Year
 @Composable
 fun GoalCard(g: Goal, s: GoalStat, inc: Color, exp: Color, onClick: () -> Unit) {
     val verb = if (g.debt) "还" else "存"
+    val m: (Double) -> String = { moneyC(it, g.currency) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Card(
         modifier = Modifier
@@ -179,11 +180,11 @@ fun GoalCard(g: Goal, s: GoalStat, inc: Color, exp: Color, onClick: () -> Unit) 
             }
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(
-                    (if (g.debt) "已还 " else "已存 ") + money(s.done),
+                    (if (g.debt) "已还 " else "已存 ") + m(s.done),
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp,
                 )
-                Text(" / " + money(g.target + if (g.debt) g.accrued else 0.0), color = muted, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Text(" / " + m(g.target + if (g.debt) g.accrued else 0.0), color = muted, fontSize = 13.sp, modifier = Modifier.weight(1f))
                 Text(
                     "${(s.pct * 100).toInt()}%",
                     fontWeight = FontWeight.Bold,
@@ -201,45 +202,45 @@ fun GoalCard(g: Goal, s: GoalStat, inc: Color, exp: Color, onClick: () -> Unit) 
             )
             if (g.debt && g.rate > 0 && s.remaining > 0) {
                 Text(
-                    "💸 年利率 ${pct(g.rate)} · 每月利息约 ${money(s.monthlyInterest)} · 每天约 ${money(s.dailyInterest)}" +
-                        if (g.accrued > 0) " · 已累计利息 ${money(g.accrued)}" else "",
+                    "💸 年利率 ${pct(g.rate)} · 每月利息约 ${m(s.monthlyInterest)} · 每天约 ${m(s.dailyInterest)}" +
+                        if (g.accrued > 0) " · 已累计利息 ${m(g.accrued)}" else "",
                     fontSize = 12.sp,
                     color = exp,
                 )
                 if (s.neverPayoff) {
-                    Text("⚠️ 每月还 ${money(g.monthly)} 不够付利息，欠款会越滚越多！至少要还 ${money(s.monthlyInterest)} 以上", fontSize = 13.sp, color = exp, fontWeight = FontWeight.Bold)
+                    Text("⚠️ 每月还 ${m(g.monthly)} 不够付利息，欠款会越滚越多！至少要还 ${m(s.monthlyInterest)} 以上", fontSize = 13.sp, color = exp, fontWeight = FontWeight.Bold)
                 } else if (s.futureInterest > 0) {
-                    Text("按计划还清，还要再付利息约 ${money(s.futureInterest)}", fontSize = 12.sp, color = muted)
+                    Text("按计划还清，还要再付利息约 ${m(s.futureInterest)}", fontSize = 12.sp, color = muted)
                 }
             }
             if (s.remaining <= 0.0) {
                 Text(if (g.debt) "🎉 已经还清！" else "🎉 目标达成！", color = inc, fontWeight = FontWeight.Bold)
             } else {
                 Text(
-                    (if (g.debt) "还欠 " else "还差 ") + money(s.remaining),
+                    (if (g.debt) "还欠 " else "还差 ") + m(s.remaining),
                     fontWeight = FontWeight.Medium,
                 )
                 if (g.monthly > 0) {
                     val left = g.monthly - s.thisMonth
                     Text(
                         when {
-                            left < 0 -> "本月已$verb ${money(s.thisMonth)}，比计划多$verb ${money(-left)} 👍"
-                            left == 0.0 -> "本月已$verb ${money(s.thisMonth)}，本月计划完成 ✅"
-                            else -> "本月已$verb ${money(s.thisMonth)}，还差 ${money(left)} 达到每月 ${money(g.monthly)}"
+                            left < 0 -> "本月已$verb ${m(s.thisMonth)}，比计划多$verb ${m(-left)} 👍"
+                            left == 0.0 -> "本月已$verb ${m(s.thisMonth)}，本月计划完成 ✅"
+                            else -> "本月已$verb ${m(s.thisMonth)}，还差 ${m(left)} 达到每月 ${m(g.monthly)}"
                         },
                         fontSize = 13.sp,
                     )
                     val f = s.finish
                     if (f != null) {
                         Text(
-                            "按每月 ${money(g.monthly)}：预计 ${ymCn(f)}${if (g.debt) "还清" else "存够"}" +
+                            "按每月 ${m(g.monthly)}：预计 ${ymCn(f)}${if (g.debt) "还清" else "存够"}" +
                                 if (s.monthsLeft > 0) "（再 ${s.monthsLeft} 个月）" else "（就在本月）",
                             fontSize = 13.sp,
                         )
                     }
                 } else {
                     Text(
-                        "本月已$verb ${money(s.thisMonth)} · 设置每月计划就能算出完成时间",
+                        "本月已$verb ${m(s.thisMonth)} · 设置每月计划就能算出完成时间",
                         fontSize = 13.sp,
                         color = muted,
                     )
@@ -249,9 +250,9 @@ fun GoalCard(g: Goal, s: GoalStat, inc: Color, exp: Color, onClick: () -> Unit) 
                 if (dl != null && need != null) {
                     Text(
                         if (s.monthsToDeadline <= 0) {
-                            "期限 ${ymCn(dl)}：本月内需$verb ${money(s.remaining)}"
+                            "期限 ${ymCn(dl)}：本月内需$verb ${m(s.remaining)}"
                         } else {
-                            "要在 ${ymCn(dl)} 前完成：从下个月起每月需$verb ${money(need)}"
+                            "要在 ${ymCn(dl)} 前完成：从下个月起每月需$verb ${m(need)}"
                         },
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
@@ -273,12 +274,12 @@ fun GoalCard(g: Goal, s: GoalStat, inc: Color, exp: Color, onClick: () -> Unit) 
 }
 
 @Composable
-fun MoneyField(value: String, onChange: (String) -> Unit, label: String) {
+fun MoneyField(value: String, onChange: (String) -> Unit, label: String, code: String = Cur.code) {
     OutlinedTextField(
         value = value,
         onValueChange = { s -> onChange(s.filter { it.isDigit() || it == '.' }) },
         label = { Text(label) },
-        prefix = { Text(Cur.symbol + " ") },
+        prefix = { Text(symbolOf(code) + " ") },
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         modifier = Modifier.fillMaxWidth(),
@@ -304,6 +305,7 @@ fun GoalDialog(
     var useTotal by remember { mutableStateOf(initial?.useTotal ?: false) }
     var dueText by remember { mutableStateOf(initial?.let { if (it.dueDay > 0) it.dueDay.toString() else "" } ?: "") }
     var before by remember { mutableStateOf(initial?.remindBefore ?: 0) }
+    var cur by remember { mutableStateOf(initial?.currency ?: Cur.code) }
     var rateText by remember { mutableStateOf(initial?.let { if (it.rate > 0) plainNumber(it.rate) else "" } ?: "") }
     var confirmDelete by remember { mutableStateOf(false) }
 
@@ -339,7 +341,12 @@ fun GoalDialog(
                         }
                     }
                 }
-                MoneyField(targetText, { targetText = it }, if (debt) "欠款总额" else "目标金额")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (c in CURRENCIES) {
+                        FilterChip(selected = cur == c.first, onClick = { cur = c.first }, label = { Text(c.third, fontSize = 13.sp) })
+                    }
+                }
+                MoneyField(targetText, { targetText = it }, if (debt) "欠款总额" else "目标金额", cur)
                 if (debt) {
                     OutlinedTextField(
                         value = rateText,
@@ -354,13 +361,13 @@ fun GoalDialog(
                     val tv = targetText.toDoubleOrNull() ?: 0.0
                     if (rv > 0 && tv > 0) {
                         Text(
-                            "每月利息约 ${money(tv * rv / 1200)} · 每天约 ${money(tv * rv / 36500)}。每月底会自动把利息加进欠款。",
+                            "每月利息约 ${moneyC(tv * rv / 1200, cur)} · 每天约 ${moneyC(tv * rv / 36500, cur)}。每月底会自动把利息加进欠款。",
                             fontSize = 12.sp,
                             color = exp,
                         )
                     }
                     if ((initial?.accrued ?: 0.0) > 0) {
-                        Text("已累计加入的利息：${money(initial?.accrued ?: 0.0)}", fontSize = 12.sp)
+                        Text("已累计加入的利息：${moneyC(initial?.accrued ?: 0.0, cur)}", fontSize = 12.sp)
                     }
                 }
                 if (!debt) {
@@ -377,9 +384,9 @@ fun GoalDialog(
                     }
                 }
                 if (debt || !useTotal) {
-                    MoneyField(startText, { startText = it }, if (debt) "之前已还（可选）" else "之前已存（可选）")
+                    MoneyField(startText, { startText = it }, if (debt) "之前已还（可选）" else "之前已存（可选）", cur)
                 }
-                MoneyField(monthlyText, { monthlyText = it }, if (debt) "每月计划还多少" else "每月计划存多少")
+                MoneyField(monthlyText, { monthlyText = it }, if (debt) "每月计划还多少" else "每月计划存多少", cur)
                 OutlinedTextField(
                     value = deadlineText,
                     onValueChange = { deadlineText = it.take(7) },
@@ -460,6 +467,7 @@ fun GoalDialog(
                             rate = if (debt) rateText.toDoubleOrNull() ?: 0.0 else 0.0,
                             accrued = initial?.accrued ?: 0.0,
                             accruedUntil = initial?.accruedUntil ?: "",
+                            currency = cur,
                         )
                     )
                 },

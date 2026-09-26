@@ -316,11 +316,11 @@ object Reminders {
             val v = if (g.debt) "还" else "存"
             val plan = if (g.monthly > 0) {
                 val left = g.monthly - stat.thisMonth
-                if (left > 0) "本月计划$v ${money(g.monthly)}，还差 ${money(left)}。" else "本月计划已完成 ✅"
+                if (left > 0) "本月计划$v ${moneyC(g.monthly, g.currency)}，还差 ${moneyC(left, g.currency)}。" else "本月计划已完成 ✅"
             } else {
                 ""
             }
-            val text = "$whenTxt。$plan${if (g.debt) "还欠" else "还差"} ${money(stat.remaining)}。"
+            val text = "$whenTxt。$plan${if (g.debt) "还欠" else "还差"} ${moneyC(stat.remaining, g.currency)}。"
             val alarmStyle = st.getI(K.DUE_STYLE, 0) == 1
             notify(ctx, kind.hashCode(), if (alarmStyle) CH_DUE_ALARM else CH_DUE, "💳 ${g.name} ${word}提醒", text, true, alarmStyle)
         }
@@ -405,7 +405,7 @@ object Reminders {
         val word = if (g.debt) "还款日" else "存款日"
         val desc = buildString {
             append("成长账本：${g.name} 每月 ${g.dueDay} 号$word")
-            if (g.monthly > 0) append("，计划${if (g.debt) "还" else "存"} ${money(g.monthly)}")
+            if (g.monthly > 0) append("，计划${if (g.debt) "还" else "存"} ${moneyC(g.monthly, g.currency)}")
         }
         val i = Intent(Intent.ACTION_INSERT)
             .setData(CalendarContract.Events.CONTENT_URI)
