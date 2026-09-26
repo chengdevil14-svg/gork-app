@@ -45,6 +45,7 @@ object AppLock {
     const val PIN = "lock_pin"
     const val SECURE = "lock_secure"
     const val QUICK = "lock_quick" // 记账窗口免解锁
+    const val WIDGET_HIDE = "lock_widget_hide" // 小部件隐藏金额
 
     fun hash(pin: String): String =
         MessageDigest.getInstance("SHA-256").digest(("cz-" + pin).toByteArray()).joinToString("") { "%02x".format(it) }
@@ -290,6 +291,19 @@ fun AppLockPage(store: Store, onSecureChange: (Boolean) -> Unit) {
             ) { v ->
                 quick = v
                 store.setB(AppLock.QUICK, v)
+            }
+        }
+        SectionTitle("桌面小部件")
+        androidx.compose.material3.Card(shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)) {
+            var hide by remember { mutableStateOf(store.getB(AppLock.WIDGET_HIDE, false)) }
+            SwitchRow(
+                "小部件隐藏金额",
+                if (hide) "小部件显示 ****，按钮照常能用" else "小部件直接显示今天的金额",
+                hide,
+            ) { v ->
+                hide = v
+                store.setB(AppLock.WIDGET_HIDE, v)
+                Widgets.updateAll(activity.applicationContext)
             }
         }
         SectionTitle("隐私")

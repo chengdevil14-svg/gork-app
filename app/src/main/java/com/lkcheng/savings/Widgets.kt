@@ -51,6 +51,8 @@ object Widgets {
             val total = netWorth(entries, accounts)
             val theme = st.theme
             val color = THEME_SWATCH.getOrElse(theme) { THEME_SWATCH[0] }.toArgb()
+            val hide = st.getB(AppLock.WIDGET_HIDE, false)
+            val mask = { s: String -> if (hide) "****" else s }
 
             if (sumIds.isNotEmpty()) {
                 val goals = st.loadGoals().map { g -> g to calcGoal(g, entries, total) }
@@ -60,13 +62,14 @@ object Widgets {
                 val v = RemoteViews(ctx.packageName, R.layout.widget_summary)
                 v.setTextColor(R.id.w_title, color)
                 v.setTextViewText(R.id.w_date, "${today.monthValue}月${today.dayOfMonth}日 ${weekdayCn(today)}")
-                v.setTextViewText(R.id.w_out, money(tOut))
-                v.setTextViewText(R.id.w_in, money(tIn))
-                v.setTextViewText(R.id.w_month, (if (monthNet < 0) "-" else "+") + money(monthNet))
+                v.setTextViewText(R.id.w_out, mask(money(tOut)))
+                v.setTextViewText(R.id.w_in, mask(money(tIn)))
+                v.setTextViewText(R.id.w_month, mask((if (monthNet < 0) "-" else "+") + money(monthNet)))
                 v.setTextColor(R.id.w_month, if (monthNet < 0) 0xFFDC2626.toInt() else 0xFF16A34A.toInt())
                 v.setTextViewText(
                     R.id.w_cost,
-                    "每日成本 ${money(costDay)} · 每日收入 ${money(incDay)}\n总存款 " + (if (total < 0) "-" else "") + money(total),
+                    if (hide) "🔒 金额已隐藏 · 点「记一笔」照常记账"
+                    else "每日成本 ${money(costDay)} · 每日收入 ${money(incDay)}\n总存款 " + (if (total < 0) "-" else "") + money(total),
                 )
                 v.setOnClickPendingIntent(R.id.w_root, open(ctx, 9001, ""))
                 v.setOnClickPendingIntent(R.id.w_add, open(ctx, 9002, "open_add"))
@@ -75,7 +78,7 @@ object Widgets {
             }
             if (quickIds.isNotEmpty()) {
                 val v = RemoteViews(ctx.packageName, R.layout.widget_quick)
-                v.setTextViewText(R.id.q_today, "今天已花 ${money(tOut)}")
+                v.setTextViewText(R.id.q_today, if (hide) "🔒" else "今天已花 ${money(tOut)}")
                 v.setOnClickPendingIntent(R.id.q_root, open(ctx, 9004, "open_add"))
                 mgr.updateAppWidget(quickIds, v)
             }
