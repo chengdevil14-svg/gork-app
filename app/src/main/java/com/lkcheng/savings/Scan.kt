@@ -128,6 +128,8 @@ object Scan {
         }
         var s = sb.toString()
         s = s.replace(Regex("""(\d)\s*\.\s*(\d)"""), "$1.$2") // "2 . 16" → "2.16"
+        // currency-marked amounts: decimal point misread as ":" / "：" / space → "SGD2:16" = 2.16
+        s = s.replace(Regex("""((?:SGD|MYR|USD|RM|S\$|US\$)\s*\d+)\s*[:：∶;]\s*(\d{2})(?!\d)""", RegexOption.IGNORE_CASE), "$1.$2")
         s = s.replace(Regex("""((?:SGD|MYR|USD|RM|S\$|US\$)\s*\d+)\s+(\d{2})(?!\d)""", RegexOption.IGNORE_CASE), "$1.$2") // "SGD2 16"
         return s
     }
