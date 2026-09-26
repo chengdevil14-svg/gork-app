@@ -92,6 +92,28 @@
             </intent-filter>
         </activity-alias>
         <receiver
+            android:name=".SummaryWidget"
+            android:exported="false"
+            android:label="成长账本 · 今日概览">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_summary_info" />
+        </receiver>
+        <receiver
+            android:name=".QuickWidget"
+            android:exported="false"
+            android:label="成长账本 · 快速记账">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_quick_info" />
+        </receiver>
+        <receiver
             android:name=".ReminderReceiver"
             android:exported="true">
             <intent-filter>

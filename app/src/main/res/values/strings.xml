@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">成长账本</string>
+    <string name="widget_summary_desc">今日概览：今天支出、存入、本月结余、每日成本</string>
+    <string name="widget_quick_desc">快速记一笔</string>
 </resources>

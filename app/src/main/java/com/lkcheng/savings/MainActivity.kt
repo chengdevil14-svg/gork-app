@@ -123,6 +123,7 @@ class MainActivity : ComponentActivity() {
         val store = Store(applicationContext)
         Cur.load(store)
         val openAdd = intent?.getBooleanExtra("open_add", false) == true
+        val openScan = intent?.getBooleanExtra("open_scan", false) == true
         val sharedUri: android.net.Uri? = if (intent?.action == Intent.ACTION_SEND && intent.type?.startsWith("image/") == true) {
             @Suppress("DEPRECATION")
             intent.getParcelableExtra(Intent.EXTRA_STREAM) as? android.net.Uri
@@ -145,9 +146,10 @@ class MainActivity : ComponentActivity() {
                 )
             }
             MaterialTheme(colorScheme = schemeFor(theme)) {
-                SavingsApp(store, theme, openAdd, sharedUri) { t ->
+                SavingsApp(store, theme, openAdd, sharedUri, openScan) { t ->
                     theme = t
                     store.theme = t
+                    Widgets.updateAll(applicationContext)
                 }
             }
         }
@@ -244,7 +246,7 @@ fun openUrl(context: Context, url: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.net.Uri?, onThemeChange: (Int) -> Unit) {
+fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.net.Uri?, openScan: Boolean = false, onThemeChange: (Int) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val entries = remember { mutableStateListOf<Entry>().apply { addAll(store.loadEntries()) } }
@@ -270,7 +272,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
     var selStr by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
     val prefs = remember { AppPrefs(store) }
     var showAdd by remember { mutableStateOf(openAdd) }
-    var showWelcome by rememberSaveable { mutableStateOf(prefs.popupOn.value && !openAdd) }
+    var showWelcome by rememberSaveable { mutableStateOf(prefs.popupOn.value && !openAdd && !openScan) }
     var editing by remember { mutableStateOf<Entry?>(null) }
     var showSettings by remember { mutableStateOf(false) }
 
@@ -279,7 +281,10 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
     val inc = if (greenIncome) GREEN else RED
     val exp = if (greenIncome) RED else GREEN
 
-    fun persist() = store.saveEntries(entries.toList())
+    fun persist() {
+        store.saveEntries(entries.toList())
+        Widgets.updateAll(context)
+    }
     fun persistGoals() = store.saveGoals(goals.toList())
     fun persistSubs() = store.saveSubs(subs.toList())
     fun persistAccounts() = store.saveAccounts(accounts.toList())
@@ -391,6 +396,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
         runDeposits()
         runCommute()
         runGoalInterest()
+        Widgets.updateAll(context)
         if (sharedUri != null) startScan(sharedUri)
         syncNow()
     }
@@ -413,6 +419,9 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
 
     val scanPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) startScan(uri)
+    }
+    LaunchedEffect(openScan) {
+        if (openScan) scanPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     }
 
     if (showSettings) {
