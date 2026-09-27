@@ -387,31 +387,53 @@ fun GoalDialog(
                     MoneyField(startText, { startText = it }, if (debt) "之前已还（可选）" else "之前已存（可选）", cur)
                 }
                 MoneyField(monthlyText, { monthlyText = it }, if (debt) "每月计划还多少" else "每月计划存多少", cur)
-                OutlinedTextField(
-                    value = deadlineText,
-                    onValueChange = { deadlineText = it.take(7) },
-                    label = { Text("完成期限（可选，例 2027-06）") },
-                    isError = !deadlineOk,
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    val now = YearMonth.now()
-                    for ((label, n) in listOf("半年" to 6L, "1年" to 12L, "2年" to 24L, "3年" to 36L)) {
-                        val v = now.plusMonths(n).toString()
-                        FilterChip(selected = deadlineText == v, onClick = { deadlineText = v }, label = { Text(label, fontSize = 13.sp) })
+                // ---- 完成期限：年 + 月 滚轮 ----
+                val nowYm = YearMonth.now()
+                val hasDl = deadlineText.isNotBlank()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("设定完成期限")
+                        Text(
+                            parseYm(deadlineText)?.let { d ->
+                                val n = ChronoUnit.MONTHS.between(nowYm, d)
+                                "预计完成：${ymCn(d)}（共 $n 个月）"
+                            } ?: "不设期限",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
-                    FilterChip(selected = deadlineText.isBlank(), onClick = { deadlineText = "" }, label = { Text("不设", fontSize = 13.sp) })
+                    Switch(checked = hasDl, onCheckedChange = { on -> deadlineText = if (on) nowYm.plusMonths(12).toString() else "" })
                 }
-                OutlinedTextField(
-                    value = dueText,
-                    onValueChange = { v -> dueText = v.filter { it.isDigit() }.take(2) },
-                    label = { Text(if (debt) "每月还款日（几号，可选）" else "每月存款日（几号，可选）") },
-                    isError = !dueOk,
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                if (hasDl) {
+                    val total = parseYm(deadlineText)?.let { ChronoUnit.MONTHS.between(nowYm, it).toInt() }?.coerceIn(0, 371) ?: 12
+                    val yIdx = total / 12
+                    val mIdx = total % 12
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        WheelPicker((0..30).map { "$it 年" }, yIdx, Modifier.weight(1f)) { y ->
+                            val m = (parseYm(deadlineText)?.let { ChronoUnit.MONTHS.between(nowYm, it).toInt() } ?: 0) % 12
+                            deadlineText = nowYm.plusMonths((y * 12 + m).toLong().coerceAtLeast(1)).toString()
+                        }
+                        WheelPicker((0..11).map { "$it 个月" }, mIdx, Modifier.weight(1f)) { m ->
+                            val y = (parseYm(deadlineText)?.let { ChronoUnit.MONTHS.between(nowYm, it).toInt() } ?: 0) / 12
+                            deadlineText = nowYm.plusMonths((y * 12 + m).toLong().coerceAtLeast(1)).toString()
+                        }
+                    }
+                }
+                // ---- 每月还款日：1–31 号 滚轮 ----
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(if (debt) "每月还款日" else "每月存款日")
+                        Text(
+                            if (dueDay in 1..31) "每月 $dueDay 号" else "不设",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = dueDay in 1..31, onCheckedChange = { on -> dueText = if (on) "1" else "" })
+                }
+                if (dueDay in 1..31) {
+                    WheelPicker((1..31).map { "$it 号" }, dueDay - 1, Modifier.fillMaxWidth()) { i -> dueText = (i + 1).toString() }
+                }
                 if (dueDay in 1..31) {
                     Text("提醒时间", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
