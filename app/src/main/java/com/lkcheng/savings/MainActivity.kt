@@ -1,4 +1,4 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 
 package com.lkcheng.savings
 
@@ -17,6 +17,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -325,6 +326,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
     var showAdd by remember { mutableStateOf(openAdd) }
     var showWelcome by rememberSaveable { mutableStateOf(prefs.popupOn.value && !openAdd && !openScan) }
     var editing by remember { mutableStateOf<Entry?>(null) }
+    var dayDetail by remember { mutableStateOf<LocalDate?>(null) }
     var showSettings by remember { mutableStateOf(false) }
 
     val month = YearMonth.parse(monthStr)
@@ -466,6 +468,11 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
     val daily = monthEntries.groupBy { it.date }.mapValues { (_, v) -> v.sumOf { statAmt(it, accList) } }
     val dayEntries = entries.filter { it.date == selected }.sortedByDescending { it.id }
     val dayNet = dayEntries.sumOf { statAmt(it, accList) }
+    // transit-card usage: not an expense (counted at top-up) but shown on the calendar
+    val isCardUse = { e: Entry -> !e.isTransfer && e.amount < 0 && typeOf(accOf(e, accList), accList) == TYPE_CARD }
+    val cardDaily = entries.filter { YearMonth.from(it.date) == month && isCardUse(it) }
+        .groupBy { it.date }.mapValues { (_, v) -> -v.sumOf { it.base } }
+    val dayCard = -dayEntries.filter(isCardUse).sumOf { it.base }
     val unsynced = entries.count { !it.synced } + store.pendingDeletes().size
 
     val scanPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -749,10 +756,19 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                     },
                 )
             }
-            item {
-                CalendarGrid(month, selected, daily, inc, exp) { selStr = it.toString() }
-            }
-            item {
+            item { Column {
+                CalendarGrid(month, selected, daily, inc, exp, cardDaily, onDouble = { d ->
+                    selStr = d.toString()
+                    dayDetail = d
+                }) { selStr = it.toString() }
+                Text(
+                    "双击或长按日期，查看当天的成本、收入和净额",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+                )
+            } }
+            item { Column {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -773,7 +789,14 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                         )
                     }
                 }
-            }
+                if (dayCard > 0) {
+                    Text(
+                        "🚇 交通卡扣 ${money(dayCard)}（充值时已算支出，这里不重复算）",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } }
             if (dayEntries.isEmpty()) {
                 item {
                     Text(
@@ -926,6 +949,17 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                 syncNow()
             },
         )
+    }
+
+    val dd = dayDetail
+    if (dd != null) {
+        val allE = entries.toList()
+        val nw = netWorth(allE, accList)
+        DaySummaryDialog(
+            dd, allE, accList, subs.toList(),
+            goals.toList().map { g -> g to calcGoal(g, allE, nw) },
+            deposits.toList(), inc, exp,
+        ) { dayDetail = null }
     }
 
     if (showWelcome) {
@@ -1144,6 +1178,8 @@ fun CalendarGrid(
     daily: Map<LocalDate, Double>,
     inc: Color,
     exp: Color,
+    cardDaily: Map<LocalDate, Double> = emptyMap(),
+    onDouble: (LocalDate) -> Unit = {},
     onSelect: (LocalDate) -> Unit,
 ) {
     val today = LocalDate.now()
@@ -1182,10 +1218,12 @@ fun CalendarGrid(
                                 val net = daily[date]
                                 val isSel = date == selected
                                 val isToday = date == today
+                                val card = cardDaily[date]
                                 val bg = when {
                                     isSel -> MaterialTheme.colorScheme.primary
                                     net != null && net > 0 -> inc.copy(alpha = 0.14f)
                                     net != null && net < 0 -> exp.copy(alpha = 0.14f)
+                                    card != null -> MaterialTheme.colorScheme.surfaceVariant
                                     else -> Color.Transparent
                                 }
                                 var m = Modifier
@@ -1196,7 +1234,11 @@ fun CalendarGrid(
                                     m = m.border(1.5.dp, MaterialTheme.colorScheme.primary, shape)
                                 }
                                 Column(
-                                    modifier = m.clickable { onSelect(date) },
+                                    modifier = m.combinedClickable(
+                                        onClick = { onSelect(date) },
+                                        onDoubleClick = { onDouble(date) },
+                                        onLongClick = { onDouble(date) },
+                                    ),
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Center,
                                 ) {
@@ -1213,6 +1255,14 @@ fun CalendarGrid(
                                             maxLines = 1,
                                             fontWeight = FontWeight.Bold,
                                             color = if (isSel) Color.White else if (net > 0) inc else exp,
+                                        )
+                                    }
+                                    if (card != null && card > 0) {
+                                        Text(
+                                            "🚇-" + compact(card).removePrefix("+").removePrefix("-"),
+                                            fontSize = 8.sp,
+                                            maxLines = 1,
+                                            color = if (isSel) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
                                 }

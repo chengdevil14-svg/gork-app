@@ -464,3 +464,56 @@ fun CostStatsCard(
         }
     }
 }
+
+
+@Composable
+fun DaySummaryDialog(
+    day: LocalDate,
+    entries: List<Entry>,
+    accounts: List<Account>,
+    subs: List<Sub>,
+    goalStats: List<Pair<Goal, GoalStat>>,
+    deposits: List<Deposit>,
+    inc: Color,
+    exp: Color,
+    onDismiss: () -> Unit,
+) {
+    val sv = { e: Entry -> statAmt(e, accounts) }
+    val todays = entries.filter { it.date == day }
+    val cur = todays.filter { sv(it) != 0.0 }
+    val inSum = cur.filter { sv(it) > 0 }.sumOf { sv(it) }
+    val outSum = -cur.filter { sv(it) < 0 }.sumOf { sv(it) }
+    val card = -todays.filter { !it.isTransfer && it.amount < 0 && typeOf(accOf(it, accounts), accounts) == TYPE_CARD }.sumOf { it.base }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("${day.monthValue}月${day.dayOfMonth}日 ${weekdayCn(day)}", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row {
+                    Column(Modifier.weight(1f)) {
+                        Text("收入", fontSize = 12.sp)
+                        Text(money(inSum), color = inc, fontWeight = FontWeight.Bold)
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("支出", fontSize = 12.sp)
+                        Text(money(outSum), color = exp, fontWeight = FontWeight.Bold)
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("净额", fontSize = 12.sp)
+                        val net = inSum - outSum
+                        Text(signedMoney(net), color = if (net >= 0) inc else exp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                if (card > 0) {
+                    Text("🚇 交通卡扣 ${money(card)}（不重复算支出）", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("${todays.size} 笔记录", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                CostStatsCard(0, day, cur, sv, subs, accounts, goalStats, deposits, inSum, inc, exp)
+            }
+        },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("关闭") } },
+    )
+}
