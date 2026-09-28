@@ -734,137 +734,150 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                     )
                 }
             }
-            item {
-                SummaryCard(total, 0.0, month, monthIn, monthOut, inc, exp)
-            }
-            if (prefs.homeAcc.value) item {
-                AccountsStrip(accounts.toList(), entries.toList(), inc, exp) { tab = 3 }
-            }
-
-            item {
-                MonthHeader(
-                    month = month,
-                    onPrev = { goToMonth(month.minusMonths(1)) },
-                    onNext = { goToMonth(month.plusMonths(1)) },
-                    onToday = { goToMonth(YearMonth.now()) },
-                    onPick = {
-                        android.app.DatePickerDialog(context, { _, y, mo, d ->
-                            val picked = LocalDate.of(y, mo + 1, d)
-                            monthStr = YearMonth.from(picked).toString()
-                            selStr = picked.toString()
-                        }, selected.year, selected.monthValue - 1, selected.dayOfMonth).show()
-                    },
-                )
-            }
-            item { Column {
-                CalendarGrid(month, selected, daily, inc, exp, cardDaily, onDouble = { d ->
-                    selStr = d.toString()
-                    dayDetail = d
-                }) { selStr = it.toString() }
-                Text(
-                    "双击或长按日期，查看当天的成本、收入和净额",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp, start = 4.dp),
-                )
-            } }
-            item { Column {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "${selected.monthValue}月${selected.dayOfMonth}日 ${weekdayCn(selected)}",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (dayEntries.isNotEmpty()) {
+            for (sec in prefs.home.visible()) when (sec) {
+                "summary" -> {
+                    item {
+                        SummaryCard(total, 0.0, month, monthIn, monthOut, inc, exp)
+                    }
+                }
+                "accounts" -> {
+                    item {
+                        AccountsStrip(accounts.toList(), entries.toList(), inc, exp) { tab = 3 }
+                    }
+                }
+                "calendar" -> {
+                    item {
+                        MonthHeader(
+                            month = month,
+                            onPrev = { goToMonth(month.minusMonths(1)) },
+                            onNext = { goToMonth(month.plusMonths(1)) },
+                            onToday = { goToMonth(YearMonth.now()) },
+                            onPick = {
+                                android.app.DatePickerDialog(context, { _, y, mo, d ->
+                                    val picked = LocalDate.of(y, mo + 1, d)
+                                    monthStr = YearMonth.from(picked).toString()
+                                    selStr = picked.toString()
+                                }, selected.year, selected.monthValue - 1, selected.dayOfMonth).show()
+                            },
+                        )
+                    }
+                    item { Column {
+                        CalendarGrid(month, selected, daily, inc, exp, cardDaily, onDouble = { d ->
+                            selStr = d.toString()
+                            dayDetail = d
+                        }) { selStr = it.toString() }
                         Text(
-                            signedMoney(dayNet),
-                            color = if (dayNet >= 0) inc else exp,
+                            "双击或长按日期，查看当天的成本、收入和净额",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+                        )
+                    } }
+                }
+                "day" -> {
+                    item { Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "${selected.monthValue}月${selected.dayOfMonth}日 ${weekdayCn(selected)}",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (dayEntries.isNotEmpty()) {
+                                Text(
+                                    signedMoney(dayNet),
+                                    color = if (dayNet >= 0) inc else exp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+                        if (dayCard > 0) {
+                            Text(
+                                "🚇 交通卡扣 ${money(dayCard)}（充值时已算支出，这里不重复算）",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    } }
+                    if (dayEntries.isEmpty()) {
+                        item {
+                            Text(
+                                "这天还没有记录，点右下角「记一笔」添加",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 16.dp),
+                            )
+                        }
+                    }
+                    items(dayEntries, key = { it.id }) { e ->
+                        EntryRow(
+                            e, inc, exp,
+                            showSync = syncUrl.isNotBlank(),
+                            goalName = goals.firstOrNull { it.id == e.goalId }?.name ?: "",
+                            accountText = if (e.isTransfer) {
+                                accName(accOf(e, accounts), accounts) + " → " + accName(e.toAccountId, accounts)
+                            } else if (accounts.size > 1) {
+                                accName(accOf(e, accounts), accounts)
+                            } else {
+                                ""
+                            },
+                        ) { editing = e }
+                    }
+                }
+                "daily" -> {
+                    item {
+                        Text(
+                            "📅 每日成本",
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(top = 16.dp),
+                        )
+                    }
+                    item {
+                        val allE = entries.toList()
+                        val nowYm = YearMonth.now()
+                        val outNow = -allE.filter { YearMonth.from(it.date) == nowYm }.sumOf { minOf(0.0, statAmt(it, accList)) }
+                        DailyCostCard(
+                            subs.toList(),
+                            accList,
+                            goals.toList().map { g -> g to calcGoal(g, allE, total) },
+                            deposits.toList(),
+                            outNow,
+                            inc,
+                            exp,
                         )
                     }
                 }
-                if (dayCard > 0) {
-                    Text(
-                        "🚇 交通卡扣 ${money(dayCard)}（充值时已算支出，这里不重复算）",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                "todo" -> {
+                    item {
+                        val todos = ArrayList<Todo>()
+                        val live = accList.filter { !it.archived }
+                        if (live.size <= 1) todos.add(Todo("新增你的银行卡 / 信用卡 / 交通卡账户") { tab = 3 })
+                        for (a in live.filter { acct -> acct.opening == 0.0 && entries.none { e -> accOf(e, accList) == acct.id || e.toAccountId == acct.id } }) {
+                            todos.add(Todo("「${a.name}」还没填目前余额") { tab = 3 })
+                        }
+                        for (a in live.filter { it.type == 2 && it.limit <= 0 }) todos.add(Todo("信用卡「${a.name}」还没填额度") { tab = 3 })
+                        for (a in live.filter { it.type == TYPE_CARD && !it.commuteOn }) todos.add(Todo("交通卡「${a.name}」可以设置通勤自动扣款") { tab = 3 })
+                        if (subs.none { it.isIncome && it.active }) todos.add(Todo("加入固定收入（工资）") { newSub = true })
+                        if (subs.none { !it.isIncome && it.active }) todos.add(Todo("加入固定支出（房租、电话费、订阅）") { newSub = true })
+                        for (g in goals.filter { it.debt }) {
+                            if (g.rate <= 0) todos.add(Todo("欠款「${g.name}」还没填年利率") { editingGoal = g })
+                            if (g.monthly <= 0) todos.add(Todo("欠款「${g.name}」还没填每月还多少") { editingGoal = g })
+                            if (g.dueDay <= 0) todos.add(Todo("欠款「${g.name}」还没填每月还款日") { editingGoal = g })
+                        }
+                        if (!prefs.remOn.value) todos.add(Todo("开启提醒通知") { showSettings = true })
+                        if (syncUrl.isBlank()) todos.add(Todo("连接 Google Sheet 同步（备份）") { showSettings = true })
+                        if (entries.none { it.date == LocalDate.now() }) todos.add(Todo("今天还没记账") {
+                            prefill = null
+                            showAdd = true
+                        })
+                        TodoCard(todos)
+                    }
                 }
-            } }
-            if (dayEntries.isEmpty()) {
-                item {
-                    Text(
-                        "这天还没有记录，点右下角「记一笔」添加",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 16.dp),
-                    )
-                }
-            }
-            items(dayEntries, key = { it.id }) { e ->
-                EntryRow(
-                    e, inc, exp,
-                    showSync = syncUrl.isNotBlank(),
-                    goalName = goals.firstOrNull { it.id == e.goalId }?.name ?: "",
-                    accountText = if (e.isTransfer) {
-                        accName(accOf(e, accounts), accounts) + " → " + accName(e.toAccountId, accounts)
-                    } else if (accounts.size > 1) {
-                        accName(accOf(e, accounts), accounts)
-                    } else {
-                        ""
-                    },
-                ) { editing = e }
-            }
-            if (prefs.homeDaily.value) item {
-                Text(
-                    "📅 每日成本",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 16.dp),
-                )
-            }
-            if (prefs.homeDaily.value) item {
-                val allE = entries.toList()
-                val nowYm = YearMonth.now()
-                val outNow = -allE.filter { YearMonth.from(it.date) == nowYm }.sumOf { minOf(0.0, statAmt(it, accList)) }
-                DailyCostCard(
-                    subs.toList(),
-                    accList,
-                    goals.toList().map { g -> g to calcGoal(g, allE, total) },
-                    deposits.toList(),
-                    outNow,
-                    inc,
-                    exp,
-                )
-            }
-            if (prefs.homeTodo.value) item {
-                val todos = ArrayList<Todo>()
-                val live = accList.filter { !it.archived }
-                if (live.size <= 1) todos.add(Todo("新增你的银行卡 / 信用卡 / 交通卡账户") { tab = 3 })
-                for (a in live.filter { acct -> acct.opening == 0.0 && entries.none { e -> accOf(e, accList) == acct.id || e.toAccountId == acct.id } }) {
-                    todos.add(Todo("「${a.name}」还没填目前余额") { tab = 3 })
-                }
-                for (a in live.filter { it.type == 2 && it.limit <= 0 }) todos.add(Todo("信用卡「${a.name}」还没填额度") { tab = 3 })
-                for (a in live.filter { it.type == TYPE_CARD && !it.commuteOn }) todos.add(Todo("交通卡「${a.name}」可以设置通勤自动扣款") { tab = 3 })
-                if (subs.none { it.isIncome && it.active }) todos.add(Todo("加入固定收入（工资）") { newSub = true })
-                if (subs.none { !it.isIncome && it.active }) todos.add(Todo("加入固定支出（房租、电话费、订阅）") { newSub = true })
-                for (g in goals.filter { it.debt }) {
-                    if (g.rate <= 0) todos.add(Todo("欠款「${g.name}」还没填年利率") { editingGoal = g })
-                    if (g.monthly <= 0) todos.add(Todo("欠款「${g.name}」还没填每月还多少") { editingGoal = g })
-                    if (g.dueDay <= 0) todos.add(Todo("欠款「${g.name}」还没填每月还款日") { editingGoal = g })
-                }
-                if (!prefs.remOn.value) todos.add(Todo("开启提醒通知") { showSettings = true })
-                if (syncUrl.isBlank()) todos.add(Todo("连接 Google Sheet 同步（备份）") { showSettings = true })
-                if (entries.none { it.date == LocalDate.now() }) todos.add(Todo("今天还没记账") {
-                    prefill = null
-                    showAdd = true
-                })
-                TodoCard(todos)
             }
         }
     }

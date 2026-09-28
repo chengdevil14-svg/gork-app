@@ -104,6 +104,7 @@ class AppPrefs(store: Store) {
     val homeAcc = BoolPref(store, "home_acc", true)
     val homeDaily = BoolPref(store, "home_daily", true)
     val homeTodo = BoolPref(store, "home_todo", true)
+    val home = HomeLayout(store)
     val subOn = BoolPref(store, K.SUB_ON, true)
     val subH = IntPref(store, K.SUB_H, 10)
     val subM = IntPref(store, K.SUB_M, 0)
@@ -112,6 +113,67 @@ class AppPrefs(store: Store) {
     val slotOn = SLOTS.associate { it.key to BoolPref(store, K.slotOn(it.key), true) }
     val slotH = SLOTS.associate { it.key to IntPref(store, K.slotH(it.key), it.h) }
     val slotM = SLOTS.associate { it.key to IntPref(store, K.slotM(it.key), it.m) }
+}
+
+data class HomeSec(val key: String, val label: String, val desc: String)
+
+val HOME_SECS = listOf(
+    HomeSec("summary", "💰 总览", "总资产、本月收入 / 支出"),
+    HomeSec("accounts", "💳 账户余额", "各账户余额"),
+    HomeSec("calendar", "🗓️ 月历", "月份切换 + 日历"),
+    HomeSec("day", "📋 当天明细", "选中日期的每一笔记录"),
+    HomeSec("daily", "📅 每日成本", "每天固定要花多少"),
+    HomeSec("todo", "📝 还没填写", "待设置清单"),
+)
+
+class HomeLayout(private val store: Store) {
+    private val orderSt: MutableState<List<String>>
+    private val hiddenSt: MutableState<Set<String>>
+
+    init {
+        val all = HOME_SECS.map { it.key }
+        val saved = store.getS("home_order", "").split(",").filter { it in all }
+        orderSt = mutableStateOf(saved + all.filter { it !in saved })
+        val h = store.getS("home_hidden", "\u0000")
+        hiddenSt = mutableStateOf(
+            if (h == "\u0000") {
+                buildSet {
+                    if (!store.getB("home_acc", true)) add("accounts")
+                    if (!store.getB("home_daily", true)) add("daily")
+                    if (!store.getB("home_todo", true)) add("todo")
+                }
+            } else {
+                h.split(",").filter { it.isNotBlank() }.toSet()
+            },
+        )
+    }
+
+    val order: List<String> get() = orderSt.value
+    fun shown(key: String) = key !in hiddenSt.value
+    fun visible() = order.filter { shown(it) }
+
+    fun setShown(key: String, on: Boolean) {
+        hiddenSt.value = if (on) hiddenSt.value - key else hiddenSt.value + key
+        store.setS("home_hidden", hiddenSt.value.joinToString(","))
+    }
+
+    fun move(key: String, delta: Int) {
+        val l = order.toMutableList()
+        val i = l.indexOf(key)
+        val j = i + delta
+        if (i < 0 || j < 0 || j >= l.size) return
+        l[i] = l[j]
+        l[j] = key
+        orderSt.value = l
+        store.setS("home_order", l.joinToString(","))
+    }
+
+    fun reset() {
+        orderSt.value = HOME_SECS.map { it.key }
+        hiddenSt.value = emptySet()
+        store.setS("home_order", "")
+        store.setS("home_hidden", "")
+    }
 }
 
 fun hm(h: Int, m: Int) = String.format(Locale.US, "%02d:%02d", h, m)
@@ -254,13 +316,53 @@ fun SettingsScreen(
                     }
                 }
                 "home" -> Column {
+                    Text(
+                        "开关 = 首页显示或隐藏；↑ ↓ = 调整排第几",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
                     Card(shape = RoundedCornerShape(16.dp)) {
-                        SwitchRow("💳 账户余额", "首页显示各账户余额", prefs.homeAcc.value) { prefs.homeAcc.value = it }
-                        HorizontalDivider()
-                        SwitchRow("📅 每日成本", "首页最下面显示每日成本", prefs.homeDaily.value) { prefs.homeDaily.value = it }
-                        HorizontalDivider()
-                        SwitchRow("📝 还没填写", "首页显示待设置清单", prefs.homeTodo.value) { prefs.homeTodo.value = it }
+                        val order = prefs.home.order
+                        order.forEachIndexed { idx, key ->
+                            val sec = HOME_SECS.first { it.key == key }
+                            if (idx > 0) HorizontalDivider()
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    "${idx + 1}",
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.width(22.dp),
+                                )
+                                Column(Modifier.weight(1f)) {
+                                    Text(sec.label, fontWeight = FontWeight.Medium)
+                                    Text(sec.desc, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                androidx.compose.material3.TextButton(
+                                    onClick = { prefs.home.move(key, -1) },
+                                    enabled = idx > 0,
+                                    contentPadding = PaddingValues(0.dp),
+                                    modifier = Modifier.width(36.dp),
+                                ) { Text("↑", fontSize = 18.sp) }
+                                androidx.compose.material3.TextButton(
+                                    onClick = { prefs.home.move(key, 1) },
+                                    enabled = idx < order.size - 1,
+                                    contentPadding = PaddingValues(0.dp),
+                                    modifier = Modifier.width(36.dp),
+                                ) { Text("↓", fontSize = 18.sp) }
+                                Switch(checked = prefs.home.shown(key), onCheckedChange = { prefs.home.setShown(key, it) })
+                            }
+                        }
                     }
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = { prefs.home.reset() },
+                        modifier = Modifier.padding(top = 12.dp),
+                    ) { Text("恢复默认顺序") }
                     Text(
                         "隐藏的内容仍然可以在底部的「计划 / 报表 / 账户」页面看到。",
                         fontSize = 12.sp,
