@@ -38,6 +38,7 @@ data class Account(
     val weekdays: String = "12345", // 1=周一 … 7=周日
     val exceptions: String = "", // 逗号分隔的日期：和星期规则相反（放假 / 加班）
     val commuteUntil: String = "", // 已扣到哪天
+    val askDaily: Boolean = false, // 不按日期，每天打开 app 时问要不要扣
 )
 
 data class Goal(
@@ -227,6 +228,7 @@ class Store(context: Context) {
                         weekdays = o.optString("weekdays", "12345"),
                         exceptions = o.optString("exceptions", ""),
                         commuteUntil = o.optString("commuteUntil", ""),
+                        askDaily = o.optBoolean("askDaily", false),
                     )
                 )
             } catch (e: Exception) {
@@ -254,6 +256,7 @@ class Store(context: Context) {
                     .put("weekdays", a.weekdays)
                     .put("exceptions", a.exceptions)
                     .put("commuteUntil", a.commuteUntil)
+                    .put("askDaily", a.askDaily)
             )
         }
         sp.edit().putString("accounts", arr.toString()).apply()

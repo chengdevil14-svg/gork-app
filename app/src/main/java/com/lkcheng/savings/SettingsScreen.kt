@@ -256,7 +256,7 @@ fun SettingsScreen(
                     Card(shape = RoundedCornerShape(16.dp)) {
                         MenuItem("🔔", "提醒与通知", "问候、饭点记账、还款日、订阅续费 · $remTxt") { page = "remind" }
                         HorizontalDivider()
-                        MenuItem("📋", "打开 app 时提醒", if (prefs.popupOn.value) "已开启" else "已关闭") { page = "popup" }
+                        MenuItem("📋", "打开 app 时提醒", "今日提醒、每日询问扣款（饮料 / 交通卡）") { page = "popup" }
                         HorizontalDivider()
                         MenuItem("🏠", "首页显示", "选择首页要显示哪些区块") { page = "home" }
                         HorizontalDivider()
@@ -948,6 +948,7 @@ fun PopupPage(prefs: AppPrefs) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 12.dp),
     )
+    DailyAskSettings()
 }
 
 @Composable

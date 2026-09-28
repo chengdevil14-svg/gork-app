@@ -500,3 +500,66 @@ fun GoalDialog(
         },
     )
 }
+
+/** 所有欠款 / 存款目标加起来的总数（换算成结算货币）。 */
+@Composable
+fun GoalsSummary(goals: List<Goal>, stats: List<GoalStat>, inc: Color, exp: Color) {
+    val debts = goals.indices.filter { goals[it].debt }
+    val saves = goals.indices.filter { !goals[it].debt }
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    fun b(i: Int, v: Double) = Fx.toBase(v, goals[i].currency)
+    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (debts.isNotEmpty()) {
+                val owed = debts.sumOf { b(it, goals[it].target + goals[it].accrued) }
+                val paid = debts.sumOf { b(it, stats[it].done) }
+                val left = debts.sumOf { b(it, stats[it].remaining) }
+                val monthly = debts.sumOf { b(it, goals[it].monthly) }
+                val mInt = debts.sumOf { b(it, stats[it].monthlyInterest) }
+                val dInt = debts.sumOf { b(it, stats[it].dailyInterest) }
+                val accrued = debts.sumOf { b(it, goals[it].accrued) }
+                val future = debts.sumOf { b(it, stats[it].futureInterest) }
+                val never = debts.any { stats[it].neverPayoff }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("💳 欠款合计（${debts.size} 笔）", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text(money(left), fontWeight = FontWeight.Bold, color = exp)
+                }
+                SumLine("已还 / 总共", money(paid) + " / " + money(owed))
+                SumLine("每月计划还", money(monthly))
+                SumLine("每月利息", money(mInt), exp)
+                SumLine("每天利息", money(dInt), exp)
+                if (accrued > 0) SumLine("已经产生的利息", money(accrued), exp)
+                SumLine("还清前还要付的利息", if (never) "还不完 ⚠️" else "≈ " + money(future), exp)
+                if (monthly > 0 && mInt > 0) {
+                    Text(
+                        "每月还的钱里约 ${(mInt / monthly * 100).toInt()}% 是利息",
+                        fontSize = 12.sp,
+                        color = muted,
+                    )
+                }
+            }
+            if (debts.isNotEmpty() && saves.isNotEmpty()) HorizontalDivider(Modifier.padding(vertical = 6.dp))
+            if (saves.isNotEmpty()) {
+                val target = saves.sumOf { b(it, goals[it].target) }
+                val done = saves.sumOf { b(it, stats[it].done) }
+                val left = saves.sumOf { b(it, stats[it].remaining) }
+                val monthly = saves.sumOf { b(it, goals[it].monthly) }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("🎯 存款目标合计（${saves.size} 个）", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text(if (target > 0) "${(done / target * 100).toInt()}%" else "", fontWeight = FontWeight.Bold, color = inc)
+                }
+                SumLine("已存 / 目标", money(done) + " / " + money(target))
+                SumLine("还差", money(left))
+                SumLine("每月计划存", money(monthly))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SumLine(label: String, value: String, color: Color = Color.Unspecified) {
+    Row {
+        Text(label, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+        Text(value, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = color)
+    }
+}

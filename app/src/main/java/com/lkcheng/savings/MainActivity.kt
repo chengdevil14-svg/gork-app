@@ -327,6 +327,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
     var showWelcome by rememberSaveable { mutableStateOf(prefs.popupOn.value && !openAdd && !openScan) }
     var editing by remember { mutableStateOf<Entry?>(null) }
     var dayDetail by remember { mutableStateOf<LocalDate?>(null) }
+    var askDay by remember { mutableStateOf<LocalDate?>(null) }
     var showSettings by remember { mutableStateOf(false) }
 
     val month = YearMonth.parse(monthStr)
@@ -442,6 +443,17 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
             // edits made while syncing get picked up
             if (err == null && entries.any { !it.synced }) syncNow()
         }
+    }
+
+    val lifeOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifeOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, ev ->
+            if (ev == androidx.lifecycle.Lifecycle.Event.ON_RESUME && !openAdd) {
+                askDay = Ask.pending(store, accounts.toList())
+            }
+        }
+        lifeOwner.lifecycle.addObserver(obs)
+        onDispose { lifeOwner.lifecycle.removeObserver(obs) }
     }
 
     LaunchedEffect(Unit) {
@@ -598,6 +610,8 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f),
                     )
+                    val debtLeft = goals.filter { it.debt }.sumOf { g -> Fx.toBase(calcGoal(g, entries.toList(), total).remaining, g.currency) }
+                    if (debtLeft > 0) Text("欠 " + money(debtLeft), color = exp, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     TextButton(onClick = { newGoal = true }) { Text("＋ 新增") }
                 }
             }
@@ -619,6 +633,10 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                 }
             }
             val allEntries = entries.toList()
+            if (goals.isNotEmpty()) item {
+                val gl = goals.toList()
+                GoalsSummary(gl, gl.map { calcGoal(it, allEntries, total) }, inc, exp)
+            }
             items(goals.toList(), key = { "g" + it.id }) { g ->
                 GoalCard(g, calcGoal(g, allEntries, total), inc, exp) { editingGoal = g }
             }
@@ -658,6 +676,8 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f),
                     )
+                    val depInt = deposits.filter { it.active }.sumOf { d -> Fx.toBase(d.principal * d.rate / 100 / 12, d.currency) }
+                    if (depInt > 0) Text("月赚 " + money(depInt), color = inc, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     TextButton(onClick = { newDep = true }) { Text("＋ 新增") }
                 }
             }
@@ -975,7 +995,30 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
         ) { dayDetail = null }
     }
 
-    if (showWelcome) {
+    val askD = askDay
+    if (askD != null && !showAdd) {
+        DailyAskDialog(
+            day = askD,
+            items = Ask.items(store, accounts.toList()),
+            accounts = accounts.toList(),
+            onConfirm = { list ->
+                if (list.isNotEmpty()) {
+                    entries.addAll(list)
+                    persist()
+                    syncNow()
+                }
+                Ask.markDone(store, askD)
+                askDay = null
+            },
+            onSkip = {
+                Ask.markDone(store, askD)
+                askDay = null
+            },
+            onLater = { askDay = null },
+        )
+    }
+
+    if (showWelcome && askDay == null) {
         WelcomeDialog(
             entries = entries.toList(),
             goals = goals.toList(),
