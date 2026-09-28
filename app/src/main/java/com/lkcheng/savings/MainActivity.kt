@@ -345,7 +345,13 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
     fun persistDeposits() = store.saveDeposits(deposits.toList())
 
     fun runCommute() {
-        val (na, ne) = processCommute(accounts.toList())
+        val picked = Ask.picks(store)
+        val (na0, ne) = processCommute(accounts.toList().map { if ("c" + it.id in picked) it.copy(askDaily = true) else it })
+        val yday = LocalDate.now().minusDays(1).toString()
+        val na = na0.mapIndexed { i, a ->
+            val p = "c" + a.id in picked && !accounts[i].askDaily
+            a.copy(askDaily = accounts[i].askDaily, commuteUntil = if (p && a.commuteOn) yday else a.commuteUntil)
+        }
         if (na != accounts.toList()) {
             accounts.clear()
             accounts.addAll(na)
@@ -449,7 +455,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
     androidx.compose.runtime.DisposableEffect(lifeOwner) {
         val obs = androidx.lifecycle.LifecycleEventObserver { _, ev ->
             if (ev == androidx.lifecycle.Lifecycle.Event.ON_RESUME && !openAdd) {
-                askDay = Ask.pending(store, accounts.toList())
+                askDay = Ask.pending(store, accounts.toList(), subs.toList(), goals.toList(), entries.toList())
             }
         }
         lifeOwner.lifecycle.addObserver(obs)
@@ -999,7 +1005,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
     if (askD != null && !showAdd) {
         DailyAskDialog(
             day = askD,
-            items = Ask.items(store, accounts.toList()),
+            items = Ask.items(store, accounts.toList(), subs.toList(), goals.toList(), entries.toList()),
             accounts = accounts.toList(),
             onConfirm = { list ->
                 if (list.isNotEmpty()) {

@@ -44,28 +44,19 @@ import org.json.JSONObject
 import java.time.LocalDate
 import java.time.LocalDateTime
 
-/** 每天问一次要不要扣的项目（饮料、早餐…） */
-data class DailyAsk(
-    val id: Long,
-    val name: String,
-    val amount: Double,
-    val accountId: Long = 0L,
-    val currency: String = "SGD",
-    val tag: String = "",
-    val checked: Boolean = true, // 弹窗里默认打钩
-    val active: Boolean = true,
-)
-
-/** 弹窗里的一行 */
+/** 弹窗里的一行（都来自已有项目，不用另外填写） */
 data class AskItem(
     val key: String,
     val name: String,
+    val sub: String,
     val amount: Double,
     val currency: String,
     val accountId: Long,
     val tag: String,
     val note: String,
-    val checked: Boolean,
+    val checked: Boolean = false,
+    val toAccountId: Long = 0L,
+    val goalId: Long = 0L,
 )
 
 object Ask {
@@ -73,43 +64,10 @@ object Ask {
     const val H = "ask_h"
     const val M = "ask_m"
     const val LAST = "ask_last"
+    const val PICK = "ask_pick"
 
-    fun load(store: Store): List<DailyAsk> = try {
-        val arr = JSONArray(store.getS("daily_asks", "[]"))
-        (0 until arr.length()).map { i ->
-            val o = arr.getJSONObject(i)
-            DailyAsk(
-                id = o.getLong("id"),
-                name = o.optString("name", ""),
-                amount = o.optDouble("amount", 0.0),
-                accountId = o.optLong("accountId", 0L),
-                currency = o.optString("currency", "SGD"),
-                tag = o.optString("tag", ""),
-                checked = o.optBoolean("checked", true),
-                active = o.optBoolean("active", true),
-            )
-        }
-    } catch (e: Exception) {
-        emptyList()
-    }
-
-    fun save(store: Store, list: List<DailyAsk>) {
-        val arr = JSONArray()
-        for (a in list) {
-            arr.put(
-                JSONObject()
-                    .put("id", a.id)
-                    .put("name", a.name)
-                    .put("amount", a.amount)
-                    .put("accountId", a.accountId)
-                    .put("currency", a.currency)
-                    .put("tag", a.tag)
-                    .put("checked", a.checked)
-                    .put("active", a.active)
-            )
-        }
-        store.setS("daily_asks", arr.toString())
-    }
+    fun picks(store: Store): Set<String> = store.getS(PICK, "").split("\u0001").filter { it.isNotBlank() }.toSet()
+    fun setPicks(store: Store, v: Set<String>) = store.setS(PICK, v.joinToString("\u0001"))
 
     /** 「今天」从每天几点开始算（默认早上 8 点）。8 点前打开算前一天。 */
     fun askDay(store: Store, now: LocalDateTime = LocalDateTime.now()): LocalDate {
@@ -119,23 +77,51 @@ object Ask {
         return if (t < h * 60 + m) now.toLocalDate().minusDays(1) else now.toLocalDate()
     }
 
-    fun items(store: Store, accounts: List<Account>): List<AskItem> {
+    /** 所有可以选的已有项目 */
+    fun candidates(accounts: List<Account>, subs: List<Sub>, goals: List<Goal>, entries: List<Entry>): List<AskItem> {
         val out = ArrayList<AskItem>()
-        for (a in accounts.filter { !it.archived && it.type == TYPE_CARD && it.commuteOn && it.askDaily && it.fare > 0 }) {
-            out.add(AskItem("c" + a.id, "🚇 ${a.name} 通勤", a.fare, a.currency, a.id, "交通", "通勤", true))
+        val live = accounts.filter { !it.archived }
+        for (a in live.filter { it.type == TYPE_CARD }) {
+            val fare = if (a.fare > 0) a.fare else entries.filter { it.accountId == a.id && it.amount < 0 && !it.isTransfer }.maxByOrNull { it.date }?.let { -it.amount } ?: 0.0
+            out.add(AskItem("c" + a.id, "🚇 ${a.name} 车费", "交通卡", fare, a.currency, a.id, "交通", "通勤"))
         }
-        for (d in load(store).filter { it.active && it.amount > 0 }) {
-            out.add(AskItem("d" + d.id, d.name, d.amount, d.currency, d.accountId, d.tag, d.name, d.checked))
+        for (s in subs.filter { it.active && !it.isIncome }) {
+            out.add(
+                AskItem(
+                    "s" + s.id, "🔁 " + s.name, "固定支出 / 订阅", s.amount, s.currency, s.accountId,
+                    if (s.toAccountId != 0L) "交通卡充值" else "订阅", s.name, toAccountId = s.toAccountId,
+                )
+            )
+        }
+        for (g in goals.filter { it.debt }) {
+            out.add(AskItem("g" + g.id, "💳 还 " + g.name, "欠款", g.monthly, g.currency, 0L, "还款", "还款 " + g.name, goalId = g.id))
+        }
+        val since = LocalDate.now().minusDays(90)
+        val common = entries
+            .filter { it.amount < 0 && !it.isTransfer && it.note.isNotBlank() && it.goalId == 0L && !it.date.isBefore(since) }
+            .groupBy { it.note.trim() }
+            .filter { it.value.size >= 2 }
+            .entries.sortedByDescending { it.value.size }
+            .take(12)
+        for ((note, list) in common) {
+            val last = list.maxBy { it.date }
+            if (out.any { it.note == note }) continue
+            out.add(AskItem("n" + note, note, "常记（${list.size} 次）", -last.amount, last.currency, last.accountId, last.tag, note))
         }
         return out
     }
 
-    /** 今天还没问过、且有项目 → 返回要问的日期 */
-    fun pending(store: Store, accounts: List<Account>): LocalDate? {
+    fun items(store: Store, accounts: List<Account>, subs: List<Sub>, goals: List<Goal>, entries: List<Entry>): List<AskItem> {
+        val p = picks(store)
+        return candidates(accounts, subs, goals, entries).filter { it.key in p || (it.key.startsWith("c") && accounts.any { a -> "c" + a.id == it.key && a.askDaily && a.commuteOn }) }
+    }
+
+    /** 今天还没问过、且有选项目 → 返回要问的日期 */
+    fun pending(store: Store, accounts: List<Account>, subs: List<Sub>, goals: List<Goal>, entries: List<Entry>): LocalDate? {
         if (!store.getB(ON, true)) return null
         val day = askDay(store)
         if (store.getS(LAST, "") == day.toString()) return null
-        if (items(store, accounts).isEmpty()) return null
+        if (items(store, accounts, subs, goals, entries).isEmpty()) return null
         return day
     }
 
@@ -152,7 +138,7 @@ fun DailyAskDialog(
     onLater: () -> Unit,
 ) {
     val checked = remember { mutableStateListOf<String>().apply { addAll(items.filter { it.checked }.map { it.key }) } }
-    val amounts = remember { mutableStateListOf<String>().apply { addAll(items.map { plainNumber(it.amount) }) } }
+    val amounts = remember { mutableStateListOf<String>().apply { addAll(items.map { if (it.amount > 0) plainNumber(it.amount) else "" }) } }
     val today = day == LocalDate.now()
     AlertDialog(
         onDismissRequest = onLater,
@@ -164,7 +150,7 @@ fun DailyAskDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text("打钩的会记成支出，金额可以改", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("打钩的才记账，金额可以改", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 items.forEachIndexed { i, it ->
                     val on = it.key in checked
                     Row(
@@ -208,6 +194,8 @@ fun DailyAskDialog(
                             tag = it.tag,
                             currency = it.currency,
                             accountId = it.accountId,
+                            toAccountId = it.toAccountId,
+                            goalId = it.goalId,
                         )
                     }
                 }
@@ -223,18 +211,16 @@ fun DailyAskDialog(
     )
 }
 
-/** 设置 → 打开 app 时提醒 → 每日询问扣款 */
+/** 设置 → 打开 app 时提醒 → 每日询问扣款（从已有项目选） */
 @Composable
 fun DailyAskSettings() {
     val ctx = LocalContext.current
     val store = remember { Store(ctx) }
-    val accounts = remember { store.loadAccounts().filter { !it.archived } }
-    val list = remember { mutableStateListOf<DailyAsk>().apply { addAll(Ask.load(store)) } }
+    val cands = remember { Ask.candidates(store.loadAccounts(), store.loadSubs(), store.loadGoals(), store.loadEntries()) }
+    var picks by remember { mutableStateOf(Ask.picks(store)) }
     var on by remember { mutableStateOf(store.getB(Ask.ON, true)) }
     var h by remember { mutableStateOf(store.getI(Ask.H, 8)) }
     var m by remember { mutableStateOf(store.getI(Ask.M, 0)) }
-    var editing by remember { mutableStateOf<DailyAsk?>(null) }
-    fun persist() = Ask.save(store, list.toList())
 
     Text(
         "每日询问扣款",
@@ -242,7 +228,7 @@ fun DailyAskSettings() {
         modifier = Modifier.padding(top = 20.dp, bottom = 8.dp),
     )
     Card(shape = RoundedCornerShape(16.dp)) {
-        SwitchRow("每天第一次打开 app 问「今天要扣吗？」", "比如每日饮料、早餐、交通卡", on) {
+        SwitchRow("每天第一次打开 app 问「今天要扣吗？」", "你自己打钩要扣哪些", on) {
             on = it
             store.setB(Ask.ON, it)
         }
@@ -268,148 +254,64 @@ fun DailyAskSettings() {
             Text(hm(h, m), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         }
     }
-    Card(shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(top = 12.dp)) {
-        val cards = accounts.filter { it.type == TYPE_CARD && it.commuteOn && it.askDaily }
-        for (c in cards) {
-            Row(Modifier.padding(16.dp)) {
-                Text("🚇 ${c.name} 通勤", modifier = Modifier.weight(1f))
-                Text(moneyC(c.fare, c.currency), fontWeight = FontWeight.Medium)
-            }
-            HorizontalDivider()
+    Text(
+        "选要每天问的项目（都是你已有的，不用另外填）",
+        fontSize = 13.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
+    )
+    Card(shape = RoundedCornerShape(16.dp)) {
+        if (cands.isEmpty()) {
+            Text(
+                "还没有可以选的项目。加交通卡账户、固定支出 / 订阅、欠款，或同一样东西记过 2 次以上，就会出现在这里。",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(16.dp),
+            )
         }
-        list.forEach { d ->
+        var lastGroup = ""
+        cands.forEachIndexed { i, c ->
+            val group = c.sub.substringBefore("（")
+            if (group != lastGroup) {
+                if (i > 0) HorizontalDivider()
+                Text(
+                    group,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 16.dp, top = 10.dp),
+                )
+                lastGroup = group
+            }
+            val sel = c.key in picks
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { editing = d }
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .clickable {
+                        picks = if (sel) picks - c.key else picks + c.key
+                        Ask.setPicks(store, picks)
+                    }
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text(d.name + if (d.active) "" else "（已停用）", fontWeight = FontWeight.Medium)
-                    Text(
-                        (accounts.firstOrNull { it.id == d.accountId }?.name ?: "默认账户") + if (d.checked) " · 默认打钩" else " · 默认不打钩",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Text(moneyC(d.amount, d.currency), fontWeight = FontWeight.Medium)
+                Checkbox(checked = sel, onCheckedChange = { v ->
+                    picks = if (v) picks + c.key else picks - c.key
+                    Ask.setPicks(store, picks)
+                })
+                Text(c.name, modifier = Modifier.weight(1f))
+                Text(
+                    if (c.amount > 0) moneyC(c.amount, c.currency) else "当天填",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
             }
-            HorizontalDivider()
         }
-        TextButton(
-            onClick = { editing = DailyAsk(id = 0L, name = "", amount = 0.0, accountId = accounts.firstOrNull()?.id ?: 0L, currency = accounts.firstOrNull()?.currency ?: Cur.code, tag = "饮食") },
-            modifier = Modifier.padding(8.dp),
-        ) { Text("＋ 新增每日项目（饮料、早餐…）") }
     }
     Text(
-        "交通卡：到「账户 → 交通卡 → 通勤自动扣款」打开「每天打开 app 时问我」，就不用设日期。",
+        "交通卡选了之后，建议到「账户 → 交通卡」把通勤自动扣款关掉，免得重复扣。",
         fontSize = 12.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 8.dp),
-    )
-
-    editing?.let { d0 ->
-        DailyAskDialog2(
-            d0, accounts,
-            onDismiss = { editing = null },
-            onDelete = if (d0.id == 0L) null else {
-                {
-                    list.removeAll { it.id == d0.id }
-                    persist()
-                    editing = null
-                }
-            },
-            onSave = { d ->
-                if (d0.id == 0L) {
-                    list.add(d.copy(id = System.currentTimeMillis()))
-                } else {
-                    val i = list.indexOfFirst { it.id == d0.id }
-                    if (i >= 0) list[i] = d
-                }
-                persist()
-                editing = null
-            },
-        )
-    }
-}
-
-@Composable
-private fun DailyAskDialog2(
-    d0: DailyAsk,
-    accounts: List<Account>,
-    onDismiss: () -> Unit,
-    onDelete: (() -> Unit)?,
-    onSave: (DailyAsk) -> Unit,
-) {
-    var name by remember { mutableStateOf(d0.name) }
-    var amt by remember { mutableStateOf(if (d0.amount > 0) plainNumber(d0.amount) else "") }
-    var acc by remember { mutableStateOf(d0.accountId) }
-    var tag by remember { mutableStateOf(d0.tag) }
-    var checked by remember { mutableStateOf(d0.checked) }
-    var active by remember { mutableStateOf(d0.active) }
-    val cur = accounts.firstOrNull { it.id == acc }?.currency ?: d0.currency
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (d0.id == 0L) "新增每日项目" else "编辑每日项目") },
-        text = {
-            Column(
-                Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedTextField(name, { name = it }, label = { Text("名称（如：每日饮料）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(
-                    amt,
-                    { v -> amt = v.filter { it.isDigit() || it == '.' } },
-                    label = { Text("每次多少") },
-                    prefix = { Text("$cur ") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                if (accounts.isNotEmpty()) {
-                    Text("从哪个账户扣", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (a in accounts) FilterChip(selected = acc == a.id, onClick = { acc = a.id }, label = { Text(a.name) })
-                    }
-                }
-                Text("标签", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    for (t in listOf("饮食", "交通", "购物", "日常", "娱乐")) {
-                        FilterChip(selected = tag == t, onClick = { tag = if (tag == t) "" else t }, label = { Text(t) })
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("弹窗里默认打钩", modifier = Modifier.weight(1f))
-                    Switch(checked = checked, onCheckedChange = { checked = it })
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("启用", modifier = Modifier.weight(1f))
-                    Switch(checked = active, onCheckedChange = { active = it })
-                }
-                if (onDelete != null) {
-                    OutlinedButton(onClick = onDelete) { Text("删除这个项目") }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = name.isNotBlank() && (amt.toDoubleOrNull() ?: 0.0) > 0,
-                onClick = {
-                    onSave(
-                        d0.copy(
-                            name = name.trim(),
-                            amount = amt.toDoubleOrNull() ?: 0.0,
-                            accountId = acc,
-                            currency = cur,
-                            tag = tag,
-                            checked = checked,
-                            active = active,
-                        )
-                    )
-                },
-            ) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
