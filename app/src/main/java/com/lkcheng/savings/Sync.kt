@@ -85,7 +85,7 @@ object Sync {
         subEmail: Boolean,
         accounts: List<Pair<Account, Double>> = emptyList(),
         deposits: List<Deposit> = emptyList(),
-    ) {
+    ): Int {
         val aArr = org.json.JSONArray()
         for ((a, bal) in accounts) {
             aArr.put(JSONObject().put("name", a.name).put("type", a.type).put("currency", a.currency).put("balance", round2(bal)))
@@ -134,11 +134,11 @@ object Sync {
                     .put("remindBefore", g.remindBefore)
             )
         }
-        call(
+        return call(
             url,
             JSONObject().put("action", "goals").put("goals", arr).put("emailOn", emailOn)
                 .put("subs", sArr).put("subEmail", subEmail).put("baseCode", Cur.code)
                 .put("accounts", aArr).put("deposits", dArr),
-        )
+        ).optInt("count", -1)
     }
 }

@@ -320,6 +320,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
     var sheetUrl by remember { mutableStateOf(store.sheetUrl) }
     var syncing by remember { mutableStateOf(false) }
     var syncMsg by remember { mutableStateOf("") }
+    var resynced by remember { mutableStateOf(false) }
     var monthStr by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
     var selStr by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
     val prefs = remember { AppPrefs(store) }
@@ -438,8 +439,14 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                 val subsSnap = subs.toList()
                 val accSnap = accounts.toList().filter { !it.archived }.map { a -> a to balanceOf(a, entries.toList(), accounts.toList()) }
                 val depSnap = deposits.toList()
-                withContext(Dispatchers.IO) {
+                val sheetCount = withContext(Dispatchers.IO) {
                     Sync.goals(url, snapshot, prefs.emailOn.value, subsSnap, prefs.subEmail.value, accSnap, depSnap)
+                }
+                // 表格里的记录比 app 少（比如换了新表格）→ 全部重新上传一次
+                if (sheetCount in 0 until entries.size && !resynced) {
+                    resynced = true
+                    for (i in entries.indices) entries[i] = entries[i].copy(synced = false, photoSent = false)
+                    persist()
                 }
             } catch (ex: Exception) {
                 err = ex.message ?: ex.toString()

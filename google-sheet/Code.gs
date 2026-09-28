@@ -110,7 +110,7 @@ function doPost(e) {
       if (d.emailOn || d.subEmail) {
         try { ensureDailyTrigger_(); } catch (e) { /* 需要先在编辑器运行 setup 授权 */ }
       }
-      return json_({ ok: true });
+      return json_({ ok: true, count: Math.max(0, sh.getLastRow() - 1) });
     }
 
     if (d.action === 'delete') {
@@ -417,9 +417,10 @@ function buildDashboard_(ss, d, sums) {
     const o = sums.day && sums.day[key];
     let t = String(dd);
     if (o) {
+      const net = o.in - o.out;
       if (o.in > 0) t += '\n+' + o.in.toFixed(2);
       if (o.out > 0) t += '\n-' + o.out.toFixed(2);
-      const net = o.in - o.out;
+      t += '\n= ' + (net >= 0 ? '+' : '') + net.toFixed(2);
       bgs[r][c] = net > 0 ? '#DCFCE7' : (net < 0 ? '#FEE2E2' : '#FFFFFF');
       fcs[r][c] = net >= 0 ? '#166534' : '#991B1B';
     }
@@ -429,7 +430,7 @@ function buildDashboard_(ss, d, sums) {
   const cal = s.getRange(4, 1, rows, 7);
   cal.setValues(grid).setBackgrounds(bgs).setFontColors(fcs).setWrap(true).setVerticalAlignment('top')
     .setFontSize(10).setBorder(true, true, true, true, true, true, '#E5E7EB', SpreadsheetApp.BorderStyle.SOLID);
-  for (let r = 0; r < rows; r++) s.setRowHeight(4 + r, 58);
+  for (let r = 0; r < rows; r++) s.setRowHeight(4 + r, 72);
   for (let c = 1; c <= 7; c++) s.setColumnWidth(c, 78);
 
   // last 12 months under the calendar
