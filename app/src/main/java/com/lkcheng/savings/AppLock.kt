@@ -6,6 +6,7 @@ import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -79,7 +80,7 @@ object AppLock {
 @Composable
 fun PinPad(title: String, sub: String, error: String, onDone: (String) -> Unit, extra: @Composable () -> Unit = {}) {
     var pin by remember { mutableStateOf("") }
-    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Text(sub, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -173,7 +174,7 @@ fun AppLockPage(store: Store, onSecureChange: (Boolean) -> Unit) {
     val hasPin = store.getS(AppLock.PIN, "").isNotEmpty()
 
     if (settingPin) {
-        Box(Modifier.padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
             PinPad(
                 if (firstPin.isEmpty()) "设置 App 密码" else "再输入一次",
                 "4–6 位数字",
