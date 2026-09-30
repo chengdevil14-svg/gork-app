@@ -212,6 +212,7 @@ fun SettingsScreen(
         "currency" to "货币",
         "remind" to "提醒与通知",
         "popup" to "打开 app 时提醒",
+        "pay" to "付款通知一键记账",
         "home" to "首页显示",
         "lock" to "应用锁",
         "widget" to "桌面小部件",
@@ -258,6 +259,8 @@ fun SettingsScreen(
                         HorizontalDivider()
                         MenuItem("📋", "打开 app 时提醒", "今日提醒、每日询问扣款（饮料 / 交通卡）") { page = "popup" }
                         HorizontalDivider()
+                        MenuItem("💳", "付款通知一键记账", if (Pay.enabled(LocalContext.current)) "已开启" else "银行 / Wallet 付款后，通知里直接记账") { page = "pay" }
+                        HorizontalDivider()
                         MenuItem("🏠", "首页显示", "选择首页要显示哪些区块") { page = "home" }
                         HorizontalDivider()
                         val lockCtx = LocalContext.current
@@ -285,6 +288,7 @@ fun SettingsScreen(
                 "currency" -> Column { CurrencyPage(onCurrency) }
                 "remind" -> Column { RemindPage(prefs, goals, subs, syncUrl, onEditGoal, onEditSub) }
                 "popup" -> Column { PopupPage(prefs) }
+                "pay" -> Column { PayPage() }
                 "widget" -> Column {
                     val wctx = LocalContext.current
                     val wst = remember { Store(wctx) }
@@ -1204,5 +1208,47 @@ fun WelcomeDialog(entries: List<Entry>, goals: List<Goal>, subs: List<Sub>, onAd
         },
         confirmButton = { TextButton(onClick = onAdd) { Text("记一笔") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("知道了") } },
+    )
+}
+
+@Composable
+fun PayPage() {
+    val ctx = LocalContext.current
+    val st = remember { Store(ctx) }
+    var on by remember { mutableStateOf(st.getB(Pay.ON, true)) }
+    var granted by remember { mutableStateOf(Pay.enabled(ctx)) }
+    val life = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(life) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, ev ->
+            if (ev == androidx.lifecycle.Lifecycle.Event.ON_RESUME) granted = Pay.enabled(ctx)
+        }
+        life.lifecycle.addObserver(obs)
+        onDispose { life.lifecycle.removeObserver(obs) }
+    }
+    Card(shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(if (granted) "✅ 已允许读取通知" else "① 先允许「成长账本」读取通知", fontWeight = FontWeight.Bold)
+            Text(
+                "Google Wallet、OCBC、DBS、TNG、GrabPay 等付款后会弹通知。允许后，成长账本会读出金额和商家，再弹一个通知给你，按「✅ 一键记账」就记好了，不用打开 app。",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = { Pay.openAccessSettings(ctx) }) {
+                Text(if (granted) "打开通知使用权设置" else "去允许（找到「成长账本」打开）")
+            }
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+    Card(shape = RoundedCornerShape(16.dp)) {
+        SwitchRow("付款后弹出记账通知", "关掉就不再识别付款通知", on) {
+            on = it
+            st.setB(Pay.ON, it)
+        }
+    }
+    Text(
+        "· 同一笔付款（Wallet + 银行 app 都通知）3 分钟内只弹一次\n· 账户按通知里的名字自动选（比如通知有 OCBC，就选你名字带 OCBC 的账户）\n· 分类按商家自动猜（Kopitiam → 餐饮）\n· 想改金额 / 分类就按「✏️ 修改再记」\n· 通知内容只在手机里读取，不会上传",
+        fontSize = 12.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 12.dp),
     )
 }

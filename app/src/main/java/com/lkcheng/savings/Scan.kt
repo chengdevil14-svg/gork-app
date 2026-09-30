@@ -63,7 +63,7 @@ object Scan {
             }
     }
 
-    private val TAG_RULES: List<Pair<String, List<String>>> = listOf(
+    val TAG_RULES: List<Pair<String, List<String>>> = listOf(
         "餐饮" to listOf(
             "restaurant", "restoran", "kopitiam", "cafe", "coffee", "kopi", "mcdonald", "kfc", "burger", "pizza",
             "grabfood", "foodpanda", "deliveroo", "shopeefood", "food", "makan", "nasi", "mee", "bakery", "tealive",

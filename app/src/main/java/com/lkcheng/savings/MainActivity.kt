@@ -147,6 +147,9 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         Cur.load(store)
         locked.value = store.getB(AppLock.ON, false)
         applySecure(store.getB(AppLock.SECURE, false))
+        val payInfo = Pay.fromIntent(intent)
+        payInfo?.let { androidx.core.app.NotificationManagerCompat.from(this).cancel(intent.getIntExtra("nid", 0)) }
+        val payPrefill = payInfo?.let { Pay.toScan(it) }
         val openAdd = intent?.getBooleanExtra("open_add", false) == true
         val openScan = intent?.getBooleanExtra("open_scan", false) == true
         val sharedUri: android.net.Uri? = if (intent?.action == Intent.ACTION_SEND && intent.type?.startsWith("image/") == true) {
@@ -187,7 +190,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                             outTags = EXPENSE_TAGS,
                             goals = emptyList(),
                             accounts = store.loadAccounts(),
-                            prefill = null,
+                            prefill = payPrefill,
                             onDismiss = { quickPending = false },
                             onSave = { e ->
                                 store.saveEntries(store.loadEntries() + e)
@@ -198,7 +201,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                             onDelete = {},
                         )
                     }
-                } else SavingsApp(store, theme, openAdd && quickPending, sharedUri, openScan) { t ->
+                } else SavingsApp(store, theme, openAdd && quickPending, sharedUri, openScan, payPrefill) { t ->
                     theme = t
                     store.theme = t
                     Widgets.updateAll(applicationContext)
@@ -298,7 +301,7 @@ fun openUrl(context: Context, url: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.net.Uri?, openScan: Boolean = false, onThemeChange: (Int) -> Unit) {
+fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.net.Uri?, openScan: Boolean = false, payPrefill: ScanResult? = null, onThemeChange: (Int) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val entries = remember { mutableStateListOf<Entry>().apply { addAll(store.loadEntries()) } }
@@ -313,7 +316,7 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
     var editingDep by remember { mutableStateOf<Deposit?>(null) }
     var newDep by remember { mutableStateOf(false) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    var prefill by remember { mutableStateOf<ScanResult?>(null) }
+    var prefill by remember { mutableStateOf<ScanResult?>(payPrefill) }
     var scanBusy by remember { mutableStateOf(false) }
     var greenIncome by remember { mutableStateOf(store.greenForIncome) }
     var syncUrl by remember { mutableStateOf(store.syncUrl) }
@@ -467,6 +470,17 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
         }
         lifeOwner.lifecycle.addObserver(obs)
         onDispose { lifeOwner.lifecycle.removeObserver(obs) }
+    }
+
+    LaunchedEffect(DataBus.ver.intValue) {
+        if (DataBus.ver.intValue > 0) {
+            val fresh = store.loadEntries()
+            if (fresh.size != entries.size) {
+                entries.clear()
+                entries.addAll(fresh)
+                syncNow()
+            }
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -1525,7 +1539,7 @@ fun EntryDialog(
     var note by remember { mutableStateOf(initial?.note ?: prefill?.note ?: "") }
     var photo by remember { mutableStateOf(initial?.photo ?: prefill?.photo ?: "") }
     var scanning by remember { mutableStateOf(false) }
-    var scanMsg by remember { mutableStateOf(if (prefill != null) "🧾 已从截图识别，请核对后保存" else "") }
+    var scanMsg by remember { mutableStateOf(if (prefill == null) "" else if (prefill.photo.isEmpty() && prefill.rawText.isNotEmpty()) "🔔 已从付款通知读取，请核对后保存" else "🧾 已从截图识别，请核对后保存") }
     var rawText by remember { mutableStateOf(prefill?.rawText ?: "") }
     var showRaw by remember { mutableStateOf(false) }
     val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
