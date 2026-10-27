@@ -1,1 +1,1 @@
-$(cat /workspace/artifacts/Code.gs)
+PLACEHOLDER_WILL_REPLACE
