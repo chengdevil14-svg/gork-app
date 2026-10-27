@@ -49,6 +49,9 @@ object Sync {
 
     fun ping(url: String): JSONObject = call(url, JSONObject().put("action", "ping"))
 
+    /** Pull all records (and goals/subs) from the sheet. */
+    fun export(url: String): JSONObject = call(url, JSONObject().put("action", "export"))
+
     fun delete(url: String, id: Long) {
         call(url, JSONObject().put("action", "delete").put("id", id.toString()))
     }

@@ -561,6 +561,17 @@ fun SavingsApp(store: Store, theme: Int, openAdd: Boolean, sharedUri: android.ne
                 entries.clear()
                 persist()
             },
+            onImport = { imported ->
+                val existingIds = entries.map { it.id }.toSet()
+                var added = 0
+                for (e in imported) {
+                    if (e.id !in existingIds) {
+                        entries.add(e)
+                        added++
+                    }
+                }
+                if (added > 0) persist()
+            },
             onClose = { showSettings = false },
         )
     } else {

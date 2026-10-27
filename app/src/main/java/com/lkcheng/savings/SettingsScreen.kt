@@ -200,6 +200,7 @@ fun SettingsScreen(
     onCurrency: (String) -> Unit,
     onEditGoal: (Goal) -> Unit,
     onClearAll: () -> Unit,
+    onImport: (List<Entry>) -> Unit,
     onClose: () -> Unit,
 ) {
     var page by rememberSaveable { mutableStateOf("") }
@@ -375,7 +376,7 @@ fun SettingsScreen(
                     )
                 }
                 "sync" -> Column { SyncPage(syncUrl, sheetUrl, onSyncUrl, onSheetFound) }
-                "data" -> Column { DataPage(entries, onClearAll) }
+                "data" -> Column { DataPage(entries, syncUrl, onClearAll, onImport) }
             }
         }
     }
@@ -1094,10 +1095,68 @@ fun GuideStep(num: String, title: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-fun DataPage(entries: List<Entry>, onClearAll: () -> Unit) {
+fun DataPage(entries: List<Entry>, syncUrl: String, onClearAll: () -> Unit, onImport: (List<Entry>) -> Unit) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     var confirmClear by remember { mutableStateOf(false) }
+    var importing by remember { mutableStateOf(false) }
+    var importMsg by remember { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (syncUrl.isNotBlank()) {
+            OutlinedButton(
+                onClick = {
+                    importing = true
+                    importMsg = ""
+                    scope.launch {
+                        try {
+                            val json = withContext(Dispatchers.IO) { Sync.export(syncUrl) }
+                            val arr = json.optJSONArray("records") ?: org.json.JSONArray()
+                            val imported = mutableListOf<Entry>()
+                            for (i in 0 until arr.length()) {
+                                val o = arr.getJSONObject(i)
+                                val id = o.optString("id").toLongOrNull() ?: continue
+                                val dateStr = o.optString("date")
+                                val date = try { java.time.LocalDate.parse(dateStr.take(10)) } catch (e: Exception) { continue }
+                                val amount = o.optDouble("amount", 0.0)
+                                imported.add(
+                                    Entry(
+                                        id = id,
+                                        date = date,
+                                        amount = amount,
+                                        note = o.optString("note"),
+                                        tag = o.optString("tag"),
+                                        currency = o.optString("currency", "SGD"),
+                                        goalId = 0L,
+                                        accountId = 0L,
+                                        toAccountId = 0L,
+                                        photo = "",
+                                        synced = true,
+                                        photoSent = false,
+                                    )
+                                )
+                            }
+                            onImport(imported)
+                            importMsg = "已导入 ${imported.size} 条（按编号合并，已有记录不覆盖）"
+                        } catch (e: Exception) {
+                            importMsg = "导入失败：${e.message}"
+                        } finally {
+                            importing = false
+                        }
+                    }
+                },
+                enabled = !importing,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (importing) CircularProgressIndicator(Modifier.size(18.dp))
+                else Text("从 Google Sheet 导入数据包")
+            }
+            if (importMsg.isNotEmpty()) {
+                Text(importMsg, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+            }
+        } else {
+            Text("请先在「Google Sheet 同步」里连接脚本网址，才能导入。", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
         OutlinedButton(
             onClick = {
                 val csv = buildString {

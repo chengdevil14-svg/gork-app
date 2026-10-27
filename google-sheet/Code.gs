@@ -91,6 +91,39 @@ function doPost(e) {
 
     if (d.action === 'ping') return json_({ ok: true, sheet: ss.getUrl() });
 
+    if (d.action === 'export') {
+      const last = sh.getLastRow();
+      const records = [];
+      if (last >= 2) {
+        const vals = sh.getRange(2, 1, last - 1, HEADERS.length).getValues();
+        vals.forEach(r => {
+          const id = String(r[COL.id - 1] || '').trim();
+          if (!id) return;
+          records.push({
+            id: id,
+            date: r[COL.date - 1] instanceof Date ? Utilities.formatDate(r[COL.date - 1], ss.getSpreadsheetTimeZone(), 'yyyy-MM-dd') : String(r[COL.date - 1]),
+            type: String(r[COL.type - 1] || ''),
+            amount: Number(r[COL.amount - 1]) || 0,
+            currency: String(r[COL.cur - 1] || 'SGD'),
+            base: Number(r[COL.base - 1]) || 0,
+            tag: String(r[COL.tag - 1] || ''),
+            account: String(r[COL.acc - 1] || ''),
+            note: String(r[COL.note - 1] || ''),
+            goal: String(r[COL.goal - 1] || ''),
+            stat: Number(r[COL.stat - 1]) || 0,
+          });
+        });
+      }
+      const props = PropertiesService.getScriptProperties();
+      return json_({
+        ok: true,
+        records: records,
+        goals: JSON.parse(props.getProperty('GOALS') || '[]'),
+        subs: JSON.parse(props.getProperty('SUBS') || '[]'),
+        base: props.getProperty('BASE') || 'SGD',
+      });
+    }
+
     const id = String(d.id);
     let row = findRow_(sh, id);
 
